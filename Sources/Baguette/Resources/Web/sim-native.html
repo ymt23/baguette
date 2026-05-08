@@ -113,6 +113,17 @@
     gap: 10px;
     max-height: 100%;
     min-width: 0;
+    max-width: 100%;
+  }
+
+  /* When the review drawer is open, reserve space for it and keep
+     the simulator centered inside the remaining left-side review
+     surface instead of letting the fixed drawer cover the device. */
+  #simNativeView:has(.ax-host.review-drawer[data-open="true"]) {
+    padding-right: min(392px, 42vw);
+  }
+  #simNativeView:has(.ax-host.review-drawer[data-open="true"]) .device-column {
+    max-width: calc(100vw - min(392px, 42vw) - 24px);
   }
 
   /* Toolbar pill — its own content-based width (label + controls).
@@ -606,6 +617,26 @@
     max-height: calc(100vh - 112px);
     padding: 12px;
     overflow: hidden;
+  }
+  @media (max-width: 900px) {
+    #simNativeView:has(.ax-host.review-drawer[data-open="true"]) {
+      padding-right: 12px;
+      padding-bottom: min(360px, 38vh);
+    }
+    #simNativeView:has(.ax-host.review-drawer[data-open="true"]) .device-column {
+      max-height: calc(100vh - min(360px, 38vh) - 24px);
+      max-width: 100%;
+    }
+    #simNativeView .ax-host.review-drawer[data-open="true"] {
+      top: auto;
+      right: 12px;
+      bottom: 56px;
+      width: min(360px, calc(100vw - 24px));
+      max-height: min(330px, 36vh);
+    }
+    #simNativeView .review-drawer .codex-review-drawer-body {
+      max-height: min(278px, calc(36vh - 52px)) !important;
+    }
   }
   #simNativeView .review-drawer .codex-review-drawer-body {
     display: flex;

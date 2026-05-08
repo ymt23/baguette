@@ -3,7 +3,9 @@
   'use strict';
 
   const BADGE_ID = 'baguetteVersionBadge';
-  const DEFAULT_TEXT = 'Baguette · CX';
+  const FALLBACK_BASE_VERSION = '0.1.61';
+  const FALLBACK_CX_VERSION = '0.1.0';
+  const DEFAULT_TEXT = `Baguette ${FALLBACK_BASE_VERSION} · CX ${FALLBACK_CX_VERSION}`;
   let currentText = DEFAULT_TEXT;
   let currentTitle = DEFAULT_TEXT;
   let refreshAttempts = 0;
