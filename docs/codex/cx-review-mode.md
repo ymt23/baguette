@@ -236,6 +236,10 @@ treat this payload as the same boundary object. The current MCP integration is
 a thin wrapper over the Baguette server API; it does not perform project source
 mapping or implementation.
 
+The browser UI displays `Baguette <base> · CX <extension>` in the upper-right
+corner on simulator list and focus pages. The base version follows upstream
+Baguette, while `CX` follows the fork-local Review extension version.
+
 ## Annotation Types
 
 - `design-comment`: visual feedback or human design intent.

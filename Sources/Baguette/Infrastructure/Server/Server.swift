@@ -545,11 +545,16 @@ struct Server: Sendable {
             "ok": true,
             "baguette": [
                 "version": baguetteVersion,
+            ],
+            "cxReview": [
+                "version": baguetteCXReviewVersion,
                 "reviewApiVersion": ReviewAnnotationStore.reviewApiVersion,
                 "annotationPayloadVersion": ReviewAnnotationStore.annotationPayloadVersion,
             ],
             "plugin": [
                 "version": ReviewAnnotationStore.pluginVersion,
+                "mcpVersion": ReviewAnnotationStore.mcpVersion,
+                "templateVersion": ReviewAnnotationStore.templateVersion,
             ],
             "compatible": true,
             "reviewCount": reviews.count,
@@ -978,9 +983,11 @@ enum ReviewAnnotationStoreError: Error, Equatable {
 }
 
 actor ReviewAnnotationStore {
-    static let reviewApiVersion = "1"
-    static let annotationPayloadVersion = "1"
-    static let pluginVersion = "0.1.0"
+    static let reviewApiVersion = baguetteReviewAPIVersion
+    static let annotationPayloadVersion = baguetteAnnotationPayloadVersion
+    static let pluginVersion = baguetteCXReviewVersion
+    static let mcpVersion = baguetteCXReviewVersion
+    static let templateVersion = baguetteCXReviewVersion
 
     private var records: [String: ReviewAnnotationRecord] = [:]
 

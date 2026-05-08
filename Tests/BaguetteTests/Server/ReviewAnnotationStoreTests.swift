@@ -47,6 +47,14 @@ struct ReviewAnnotationStoreTests {
         }
     }
 
+    @Test func `store versions come from CX review version constants`() {
+        #expect(ReviewAnnotationStore.reviewApiVersion == baguetteReviewAPIVersion)
+        #expect(ReviewAnnotationStore.annotationPayloadVersion == baguetteAnnotationPayloadVersion)
+        #expect(ReviewAnnotationStore.pluginVersion == baguetteCXReviewVersion)
+        #expect(ReviewAnnotationStore.mcpVersion == baguetteCXReviewVersion)
+        #expect(ReviewAnnotationStore.templateVersion == baguetteCXReviewVersion)
+    }
+
     private static let payload = """
     {
       "snapshot": { "snapshotId": "snap-1" },

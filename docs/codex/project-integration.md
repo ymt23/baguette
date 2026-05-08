@@ -210,6 +210,17 @@ Baguette, the Baguette Review Plugin, the MCP server, and the project skill
 template are versioned in this repository and should ship in the same release
 or tag.
 
+The browser UI always displays the base and fork-extension versions as:
+
+```text
+Baguette 0.1.x · CX 0.1.x
+```
+
+`Baguette` is the upstream/original base version. `CX` is the fork-local CX
+Review extension version shared by the plugin, MCP server, and project skill
+template. Upstream syncs should update the base version without changing `CX`
+unless CX Review behavior, APIs, payloads, or compatibility changed.
+
 Recommended version lines:
 
 ```text

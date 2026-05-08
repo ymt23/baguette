@@ -29,6 +29,13 @@ struct CommandParsingTests {
         #expect(!baguetteVersion.isEmpty)
     }
 
+    @Test func `CX review extension versions are separate from base version`() {
+        #expect(!baguetteCXReviewVersion.isEmpty)
+        #expect(!baguetteReviewAPIVersion.isEmpty)
+        #expect(!baguetteAnnotationPayloadVersion.isEmpty)
+        #expect(baguetteCXReviewVersion != baguetteVersion)
+    }
+
     // MARK: - list
 
     @Test func `list parses --device-set`() throws {

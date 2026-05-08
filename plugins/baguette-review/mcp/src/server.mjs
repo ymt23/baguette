@@ -144,8 +144,8 @@ async function baguetteStatus(args) {
     reachable: true,
     baseUrl,
     plugin: { version: PLUGIN_VERSION },
-    compatible: String(status.data.baguette?.reviewApiVersion) === REVIEW_API_VERSION &&
-      String(status.data.baguette?.annotationPayloadVersion) === PAYLOAD_VERSION,
+    compatible: String((status.data.cxReview || status.data.baguette)?.reviewApiVersion) === REVIEW_API_VERSION &&
+      String((status.data.cxReview || status.data.baguette)?.annotationPayloadVersion) === PAYLOAD_VERSION,
     status: status.data,
   };
 }
