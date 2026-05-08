@@ -98,8 +98,16 @@
     return this.comments.length > 0;
   };
 
+  CodexReviewMode.prototype.hasReviewState = function () {
+    return this.comments.length > 0 || this.manualTargets.length > 0;
+  };
+
   CodexReviewMode.prototype.commentCount = function () {
     return this.comments.length;
+  };
+
+  CodexReviewMode.prototype.manualTargetCount = function () {
+    return this.manualTargets.length;
   };
 
   CodexReviewMode.prototype._buildRoot = function () {
@@ -244,8 +252,10 @@
     const selected = this.selected && this.selected.target;
     const editing = this._editingComment();
     const draft = editing ? editing.note : '';
-    const selectedCount = selected ? this._commentsForTarget(targetKey(selected)).length : 0;
+    const selectedComments = selected ? this._commentsForTarget(targetKey(selected)) : [];
+    const selectedCount = selectedComments.length;
     const canCopySelected = selected && selectedCount > 0;
+    const manualSelected = selected && selected.type === 'manual-rect';
 
     this.panel.setAttribute('data-open', 'true');
     this.panel.classList.add('review-drawer');
@@ -255,20 +265,11 @@
         '<button class="ax-host-close" data-role="close" aria-label="Dismiss">×</button>' +
       '</div>' +
       '<div class="codex-review-drawer-body">' +
-        this._coverageHTML() +
         '<section class="codex-review-section">' +
-          '<div class="codex-review-section-title">Target</div>' +
+          '<div class="codex-review-section-title">Selected target</div>' +
           (selected ? this._targetDetailsHTML(selected) :
             '<div class="codex-review-empty">Select an overlay target to add comments.</div>') +
-        '</section>' +
-        '<section class="codex-review-section">' +
-          '<div class="codex-review-section-title">Manual target</div>' +
-          '<div class="codex-review-actions">' +
-            '<button class="btn" data-act="draw-rect">' + (this.drawing ? 'Cancel drawing' : 'Draw rectangle') + '</button>' +
-          '</div>' +
-          '<div class="codex-review-empty">' +
-            (this.drawing ? 'Drag on the snapshot to create a manual target.' : 'Use this for images, cells, spacing, and views missing from AX.') +
-          '</div>' +
+          (manualSelected ? '<button class="btn btn-danger" data-act="delete-target">Delete rectangle</button>' : '') +
         '</section>' +
         '<section class="codex-review-section">' +
           '<div class="codex-review-section-title">' + (editing ? 'Edit comment' : 'Add comment') + '</div>' +
@@ -283,14 +284,28 @@
           '</div>' +
         '</section>' +
         '<section class="codex-review-section">' +
-          '<div class="codex-review-section-title">Comments (' + this.comments.length + ')</div>' +
-          this._commentsListHTML() +
+          '<div class="codex-review-section-title">Comments for selected target (' + selectedCount + ')</div>' +
+          this._commentsListHTML(selectedComments, 'No comments for this target yet.') +
+        '</section>' +
+        '<section class="codex-review-section">' +
+          '<div class="codex-review-section-title">Draw review area</div>' +
+          '<div class="codex-review-actions codex-review-actions-inline">' +
+            '<button class="btn" data-act="draw-rect">' + (this.drawing ? 'Cancel drawing' : 'Draw rectangle') + '</button>' +
+          '</div>' +
+          '<div class="codex-review-empty">' +
+            (this.drawing ? 'Drag on the snapshot to create a manual review area.' : 'Use this for images, cells, spacing, and views missing from AX.') +
+          '</div>' +
+        '</section>' +
+        '<section class="codex-review-section">' +
+          '<div class="codex-review-section-title">All comments (' + this.comments.length + ')</div>' +
+          this._commentsListHTML(this.comments, 'No comments yet.') +
         '</section>' +
         '<section class="codex-review-section codex-review-actions">' +
           '<button class="btn" data-act="copy-json" ' + (selected ? '' : 'disabled') + '>Copy JSON</button>' +
           '<button class="btn" data-act="copy-selected" ' + (canCopySelected ? '' : 'disabled') + '>Copy selected annotations</button>' +
           '<button class="btn btn-primary" data-act="copy-all" ' + (this.comments.length ? '' : 'disabled') + '>Copy all annotations</button>' +
         '</section>' +
+        this._coverageHTML() +
         '<div class="codex-review-status" data-role="status"></div>' +
       '</div>';
 
@@ -300,6 +315,12 @@
     this.panel.querySelector('[data-act="draw-rect"]').addEventListener('click', () => {
       this._toggleDrawing();
     });
+    const deleteTarget = this.panel.querySelector('[data-act="delete-target"]');
+    if (deleteTarget) {
+      deleteTarget.addEventListener('click', () => {
+        this._deleteSelectedManualTarget();
+      });
+    }
     const note = this.panel.querySelector('[data-role="note"]');
     const save = this.panel.querySelector('[data-act="save-comment"]');
     if (save) {
@@ -356,15 +377,20 @@
         '<span>' + escapeHTML(role) + '</span><strong>' + count + '</strong>' +
       '</div>';
     }).join('');
-    return '<section class="codex-review-section codex-review-coverage">' +
-      '<div class="codex-review-section-title">AX coverage</div>' +
-      '<div class="codex-review-coverage-summary">' +
-        '<div><span>Total</span><strong>' + this.coverage.total + '</strong></div>' +
-        '<div><span>Overlay</span><strong>' + this.coverage.overlay + '</strong></div>' +
+    return '<details class="codex-review-section codex-review-coverage">' +
+      '<summary>' +
+        '<span>Diagnostics</span>' +
+        '<strong>' + this.coverage.overlay + '/' + this.coverage.total + ' overlay targets</strong>' +
+      '</summary>' +
+      '<div class="codex-review-coverage-body">' +
+        '<div class="codex-review-coverage-summary">' +
+          '<div><span>Total</span><strong>' + this.coverage.total + '</strong></div>' +
+          '<div><span>Overlay</span><strong>' + this.coverage.overlay + '</strong></div>' +
+        '</div>' +
+        '<div class="codex-review-coverage-roles">' + rows + '</div>' +
+        '<div class="codex-review-empty">Images, cells, or views with count 0 are not exposed by the iOS accessibility tree.</div>' +
       '</div>' +
-      '<div class="codex-review-coverage-roles">' + rows + '</div>' +
-      '<div class="codex-review-empty">Missing images, cells, or views are not exposed by the iOS accessibility tree.</div>' +
-    '</section>';
+    '</details>';
   };
 
   CodexReviewMode.prototype._targetDetailsHTML = function (target) {
@@ -478,11 +504,34 @@
     this._renderPanel();
   };
 
-  CodexReviewMode.prototype._commentsListHTML = function () {
-    if (!this.comments.length) {
-      return '<div class="codex-review-empty">No comments yet.</div>';
+  CodexReviewMode.prototype._deleteSelectedManualTarget = function () {
+    if (!this.selected || !this.selected.target || this.selected.target.type !== 'manual-rect') return;
+    const target = this.selected.target;
+    const key = targetKey(target);
+    const count = this._commentsForTarget(key).length;
+    if (count > 0) {
+      const ok = window.confirm(
+        `Delete this rectangle and ${count} comment${count === 1 ? '' : 's'}?`
+      );
+      if (!ok) return;
     }
-    const groups = annotationGroups(this.comments);
+    this.manualTargets = this.manualTargets.filter((item) => targetKey(item) !== key);
+    this.comments = this.comments.filter((comment) => targetKey(comment.target) !== key);
+    this.selected = null;
+    this.editingCommentId = null;
+    const el = this.overlay && this.overlay.querySelector('[data-target-id="' + cssEscape(target.targetId) + '"]');
+    if (el) el.remove();
+    this._refreshOverlayCommentState();
+    this._renderPanel();
+    this.onSelect(null);
+  };
+
+  CodexReviewMode.prototype._commentsListHTML = function (comments, emptyText) {
+    const list = comments || this.comments;
+    if (!list.length) {
+      return '<div class="codex-review-empty">' + escapeHTML(emptyText || 'No comments yet.') + '</div>';
+    }
+    const groups = annotationGroups(list);
     return '<div class="codex-review-comment-list">' + groups.map((group) => {
       const target = group.target;
       return '<article class="codex-review-comment-group">' +
@@ -768,6 +817,13 @@
     return String(s).replace(/[&<>"']/g, (c) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     })[c]);
+  }
+
+  function cssEscape(s) {
+    if (window.CSS && typeof window.CSS.escape === 'function') {
+      return window.CSS.escape(String(s));
+    }
+    return String(s).replace(/["\\]/g, '\\$&');
   }
 
   window.CodexReviewMode = CodexReviewMode;

@@ -30,18 +30,19 @@ synthetic DOM overlay that Codex can inspect and use as an annotation target.
 2. Turn on Review Mode.
 3. Capture the current Simulator screenshot and accessibility tree through
    `GET /simulators/:udid/review-snapshot.json`.
-5. Render the screenshot as a fixed review surface.
-6. Render accessibility nodes as transparent DOM overlay elements.
-7. Select a target element in the overlay, or draw a manual rectangle for
+4. Render the screenshot as a fixed review surface.
+5. Render accessibility nodes as transparent DOM overlay elements.
+6. Select a target element in the overlay, or draw a manual rectangle for
    content that is not exposed through accessibility.
-8. Add, edit, or delete comments for the selected target.
-9. Repeat selection and commenting across multiple targets.
-10. Copy selected or all annotation data for the project-side agent.
-11. Turn off Review Mode to return to the live stream.
+7. Add, edit, or delete comments for the selected target.
+8. Repeat selection and commenting across multiple targets.
+9. Copy selected or all annotation data for the project-side agent.
+10. Turn off Review Mode to return to the live stream.
 
-If comments exist when Review Mode is turned off, Baguette asks for
-confirmation before discarding them and resuming the stream. v1 comments are
-session-local and are not persisted by the server.
+If comments or manual rectangles exist when Review Mode is turned off,
+Baguette asks for confirmation before discarding them and resuming the stream.
+The same confirmation is used when leaving focus mode for the sidebar view.
+v1 review state is session-local and is not persisted by the server.
 
 ## Synthetic DOM
 
@@ -67,11 +68,16 @@ Each overlay element should expose stable metadata through `data-*` attributes:
 ></div>
 ```
 
-Review Mode also displays AX coverage in the drawer. This shows the total AX
-node count, overlay target count, and role counts for important roles such as
-`AXImage`, `AXCell`, `AXTable`, `AXCollection`, and `AXGroup`. A zero count
-means the iOS accessibility tree did not expose that view class or visual
-concept in the current snapshot.
+Review Mode keeps the main drawer focused on the selected target first:
+selected target details, comment editing, selected-target comments, manual
+area drawing, all comments, then copy actions. AX coverage is shown as a
+collapsed `Diagnostics` section so it remains available without competing with
+the review workflow.
+
+The Diagnostics section shows the total AX node count, overlay target count,
+and role counts for important roles such as `AXImage`, `AXCell`, `AXTable`,
+`AXCollection`, and `AXGroup`. A zero count means the iOS accessibility tree
+did not expose that view class or visual concept in the current snapshot.
 
 ## Data Model
 

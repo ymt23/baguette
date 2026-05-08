@@ -44,7 +44,8 @@ These files belong in the target iOS project, not in Baguette itself.
 1. Build and run the app through XcodeBuildMCP.
 2. Open the Baguette stream or review URL for the target Simulator.
 3. Enable Codex Review Mode.
-4. Select an overlay element.
+4. Select an overlay element, or draw a manual review area for content that is
+   not exposed by accessibility.
 5. Add GUI comments for the selected element.
 6. Repeat selection and commenting for every part that belongs in the same
    review handoff.
@@ -108,6 +109,10 @@ single snapshot. Each entry represents one selected target, and each target can
 contain multiple comments. Targets can be accessibility-derived `ax-node`
 targets or user-drawn `manual-rect` targets for views, cells, images, or
 spacing that the iOS accessibility tree does not expose.
+
+Manual rectangles are editable as review targets only within the current
+Review Mode session. Deleting a manual rectangle also removes comments attached
+to that rectangle, because the target no longer exists in the copied handoff.
 
 ```json
 {

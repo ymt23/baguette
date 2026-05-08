@@ -486,7 +486,17 @@
     // inline `startStream` layout on `/simulators`. The hash is
     // the cue sim-stream.js reads on load to auto-open the same
     // device's stream view without an extra click.
-    window.__nativeOpenSidebarView = () => {
+    window.__nativeOpenSidebarView = async () => {
+      if (reviewMode && reviewMode.isEnabled && reviewMode.isEnabled()) {
+        if (reviewModeHasDrafts()) {
+          const ok = await confirmReviewDiscard(reviewDiscardMessage('open the sidebar view'));
+          if (!ok) return;
+        }
+        try { reviewMode.disable(); } catch (_) { /* ignore */ }
+        reviewMode = null;
+        const btn = document.getElementById('nativeReviewToggle');
+        if (btn) btn.classList.remove('active');
+      }
       location.href = '/simulators#stream=' + encodeURIComponent(udid);
     };
 
@@ -521,11 +531,8 @@
 
     try {
       if (reviewMode && reviewMode.isEnabled()) {
-        if (reviewMode.hasComments && reviewMode.hasComments()) {
-          const count = reviewMode.commentCount ? reviewMode.commentCount() : 0;
-          const ok = await confirmReviewDiscard(
-            `Discard ${count} review comment${count === 1 ? '' : 's'} and return to the live stream?`
-          );
+        if (reviewModeHasDrafts()) {
+          const ok = await confirmReviewDiscard(reviewDiscardMessage('return to the live stream'));
           if (!ok) return;
         }
         reviewMode.disable();
@@ -631,11 +638,8 @@
   function remountFrame() {
     if (!frame) return;
     if (reviewMode) {
-      if (reviewMode.hasComments && reviewMode.hasComments()) {
-        const count = reviewMode.commentCount ? reviewMode.commentCount() : 0;
-        confirmReviewDiscard(
-          `Discard ${count} review comment${count === 1 ? '' : 's'} and remount the device frame?`
-        ).then((ok) => {
+      if (reviewModeHasDrafts()) {
+        confirmReviewDiscard(reviewDiscardMessage('remount the device frame')).then((ok) => {
           if (ok) remountFrameDiscardingReview();
         });
         return;
@@ -673,6 +677,22 @@
     wireKeyboard();
   }
 
+  function reviewModeHasDrafts() {
+    if (!reviewMode) return false;
+    if (reviewMode.hasReviewState) return reviewMode.hasReviewState();
+    return Boolean(reviewMode.hasComments && reviewMode.hasComments());
+  }
+
+  function reviewDiscardMessage(action) {
+    const comments = reviewMode && reviewMode.commentCount ? reviewMode.commentCount() : 0;
+    const rectangles = reviewMode && reviewMode.manualTargetCount ? reviewMode.manualTargetCount() : 0;
+    const parts = [];
+    if (comments > 0) parts.push(`${comments} comment${comments === 1 ? '' : 's'}`);
+    if (rectangles > 0) parts.push(`${rectangles} manual rectangle${rectangles === 1 ? '' : 's'}`);
+    const subject = parts.length ? parts.join(' and ') : 'review work';
+    return `Discard ${subject} and ${action}?`;
+  }
+
   function confirmReviewDiscard(message) {
     return new Promise((resolve) => {
       const existing = document.querySelector('.codex-review-confirm');
@@ -680,8 +700,8 @@
       const shell = document.createElement('div');
       shell.className = 'codex-review-confirm';
       shell.innerHTML =
-        '<div class="codex-review-confirm-card" role="dialog" aria-modal="true" aria-labelledby="codexReviewConfirmTitle">' +
-          '<div id="codexReviewConfirmTitle" class="codex-review-confirm-title">Discard review comments?</div>' +
+          '<div class="codex-review-confirm-card" role="dialog" aria-modal="true" aria-labelledby="codexReviewConfirmTitle">' +
+          '<div id="codexReviewConfirmTitle" class="codex-review-confirm-title">Discard review work?</div>' +
           '<p>' + escapeHTML(message) + '</p>' +
           '<div class="codex-review-confirm-actions">' +
             '<button class="btn" data-act="cancel">Cancel</button>' +

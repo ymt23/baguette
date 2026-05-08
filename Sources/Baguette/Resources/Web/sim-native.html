@@ -453,6 +453,13 @@
     background: var(--nv-text); color: var(--nv-bar-bg);
     border-color: transparent;
   }
+  #simNativeView .ax-host .btn-danger {
+    color: #f87171;
+    border-color: rgba(248, 113, 113, 0.28);
+  }
+  #simNativeView .ax-host .btn-danger:hover {
+    background: rgba(248, 113, 113, 0.12);
+  }
   #simNativeView .codex-review-node.hover,
   #simNativeView .codex-review-node:hover {
     background: rgba(37, 99, 235, 0.14) !important;
@@ -522,6 +529,36 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
+  #simNativeView .codex-review-coverage {
+    border-top: 1px solid var(--nv-divider);
+    padding-top: 8px;
+  }
+  #simNativeView .codex-review-coverage summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    cursor: pointer;
+    list-style: none;
+    color: var(--nv-text-muted);
+    font: 700 10px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  #simNativeView .codex-review-coverage summary::-webkit-details-marker {
+    display: none;
+  }
+  #simNativeView .codex-review-coverage summary strong {
+    color: var(--nv-text);
+    font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  #simNativeView .codex-review-coverage-body {
+    display: grid;
+    gap: 6px;
+    padding-top: 8px;
+  }
   #simNativeView .codex-review-coverage-summary,
   #simNativeView .codex-review-coverage-roles {
     display: grid;
@@ -566,6 +603,9 @@
     display: grid;
     grid-template-columns: 1fr;
     gap: 6px;
+  }
+  #simNativeView .codex-review-actions-inline {
+    grid-template-columns: 1fr;
   }
   #simNativeView .codex-review-note {
     box-sizing: border-box;
