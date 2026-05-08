@@ -34,7 +34,8 @@ synthetic DOM overlay that Codex can inspect and use as an annotation target.
 5. Render accessibility nodes as transparent DOM overlay elements.
 6. Select a target element in the overlay, or draw a manual rectangle for
    content that is not exposed through accessibility.
-7. Add, edit, or delete comments for the selected target.
+7. Add comments either from the inline `+` popover beside the selected target
+   or from the review drawer. Edit and delete existing comments in the drawer.
 8. Repeat selection and commenting across multiple targets.
 9. Copy selected or all annotation data for the project-side agent.
 10. Turn off Review Mode to return to the live stream.
@@ -68,11 +69,13 @@ Each overlay element should expose stable metadata through `data-*` attributes:
 ></div>
 ```
 
-Review Mode keeps the main drawer focused on the selected target first:
-selected target details, comment editing, selected-target comments, manual
-area drawing, all comments, then copy actions. AX coverage is shown as a
-collapsed `Diagnostics` section so it remains available without competing with
-the review workflow.
+Review Mode shows a small inline `+` control next to the selected overlay
+target. It opens a compact comment popover for quick review notes without
+moving attention to the drawer. The main drawer remains available for selected
+target details, comment editing, selected-target comments, manual area drawing,
+all comments, and copy actions. AX coverage is shown as a collapsed
+`Diagnostics` section so it remains available without competing with the review
+workflow.
 
 The Diagnostics section shows the total AX node count, overlay target count,
 and role counts for important roles such as `AXImage`, `AXCell`, `AXTable`,

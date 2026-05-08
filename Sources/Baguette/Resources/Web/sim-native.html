@@ -505,6 +505,90 @@
     border: 1.5px dashed rgba(234, 88, 12, 0.95);
     background: rgba(234, 88, 12, 0.12);
   }
+  #simNativeView .codex-review-inline-add {
+    position: absolute;
+    z-index: 3200;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1.5px solid #1d4ed8;
+    border-radius: 6px;
+    background: #2563eb;
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.24);
+    cursor: pointer;
+    font: 800 14px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  }
+  #simNativeView .codex-review-inline-add:hover {
+    background: #1d4ed8;
+  }
+  #simNativeView .codex-review-inline-popover {
+    position: absolute;
+    z-index: 3210;
+    width: min(250px, calc(100% - 16px));
+    box-sizing: border-box;
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    background: var(--nv-bar-bg);
+    border: 1px solid var(--nv-bar-border);
+    border-radius: 8px;
+    box-shadow: var(--nv-bar-shadow), var(--nv-bar-inset);
+    backdrop-filter: blur(18px) saturate(1.5);
+    -webkit-backdrop-filter: blur(18px) saturate(1.5);
+    color: var(--nv-text);
+    pointer-events: auto;
+  }
+  #simNativeView .codex-review-inline-note {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 34px;
+    max-height: 84px;
+    padding: 7px 8px;
+    resize: vertical;
+    border: 1px solid var(--nv-bar-border);
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--nv-text);
+    font: 500 11px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  #simNativeView .codex-review-inline-actions {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+    gap: 6px;
+  }
+  #simNativeView .codex-review-inline-status {
+    color: var(--nv-text-muted);
+    font: 500 10px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #simNativeView .codex-review-inline-popover .btn {
+    appearance: none;
+    border: 1px solid var(--nv-bar-border);
+    background: transparent;
+    color: inherit;
+    border-radius: 5px;
+    padding: 5px 8px;
+    font: 600 10px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    cursor: pointer;
+  }
+  #simNativeView .codex-review-inline-popover .btn:hover {
+    background: var(--nv-bar-border);
+  }
+  #simNativeView .codex-review-inline-popover .btn-primary {
+    background: var(--nv-text);
+    color: var(--nv-bar-bg);
+    border-color: transparent;
+  }
   #simNativeView .ax-host.review-drawer {
     width: min(340px, calc(100vw - 32px));
     max-height: calc(100vh - 112px);

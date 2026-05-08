@@ -32,6 +32,7 @@
     this.drawing = false;
     this.drawStart = null;
     this.drawPreview = null;
+    this.inlineComposerTargetId = null;
   }
 
   CodexReviewMode.prototype.enable = async function () {
@@ -81,6 +82,7 @@
     this.drawing = false;
     this.drawStart = null;
     this.drawPreview = null;
+    this.inlineComposerTargetId = null;
     if (this.root && this.root.parentNode) this.root.parentNode.removeChild(this.root);
     this.root = null;
     this.image = null;
@@ -235,6 +237,7 @@
     if (el) el.classList.add('selected');
     this.selected = { target };
     this._renderPanel();
+    this._renderInlineControls();
     this.onSelect(target.type === 'ax-node' ? target : null);
   };
 
@@ -407,8 +410,10 @@
   CodexReviewMode.prototype._toggleDrawing = function () {
     this.drawing = !this.drawing;
     this.drawStart = null;
+    this.inlineComposerTargetId = null;
     if (this.drawPreview) this.drawPreview.remove();
     this.drawPreview = null;
+    this._clearInlineControls();
     if (this.overlay) this.overlay.classList.toggle('is-drawing', this.drawing);
     this._renderPanel();
   };
@@ -493,8 +498,32 @@
         updatedAt: now,
       });
     }
+    this.inlineComposerTargetId = null;
     this._refreshOverlayCommentState();
     this._renderPanel();
+    this._renderInlineControls();
+  };
+
+  CodexReviewMode.prototype._saveInlineComment = function (note) {
+    if (!this.selected) return;
+    const trimmed = String(note || '').trim();
+    if (!trimmed) {
+      this._setInlineStatus('Comment is empty');
+      return;
+    }
+    const now = new Date().toISOString();
+    this.comments.push({
+      id: makeCommentId(),
+      target: this.selected.target,
+      type: COMMENT_TYPE,
+      note: trimmed,
+      createdAt: now,
+      updatedAt: now,
+    });
+    this.inlineComposerTargetId = null;
+    this._refreshOverlayCommentState();
+    this._renderPanel();
+    this._renderInlineControls();
   };
 
   CodexReviewMode.prototype._deleteComment = function (id) {
@@ -502,6 +531,7 @@
     if (this.editingCommentId === id) this.editingCommentId = null;
     this._refreshOverlayCommentState();
     this._renderPanel();
+    this._renderInlineControls();
   };
 
   CodexReviewMode.prototype._deleteSelectedManualTarget = function () {
@@ -519,11 +549,72 @@
     this.comments = this.comments.filter((comment) => targetKey(comment.target) !== key);
     this.selected = null;
     this.editingCommentId = null;
+    this.inlineComposerTargetId = null;
     const el = this.overlay && this.overlay.querySelector('[data-target-id="' + cssEscape(target.targetId) + '"]');
     if (el) el.remove();
+    this._clearInlineControls();
     this._refreshOverlayCommentState();
     this._renderPanel();
     this.onSelect(null);
+  };
+
+  CodexReviewMode.prototype._renderInlineControls = function () {
+    this._clearInlineControls();
+    if (!this.overlay || !this.selected || this.drawing) return;
+    const target = this.selected.target;
+    const frame = target && target.frame;
+    const screen = this._screenSize();
+    if (!frame || !screen.w || !screen.h) return;
+    const placement = inlinePlacement(frame, screen);
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'codex-review-inline-add';
+    button.setAttribute('aria-label', 'Add comment to selected target');
+    button.title = 'Add comment';
+    button.textContent = '+';
+    button.style.left = `${(placement.button.x / screen.w) * 100}%`;
+    button.style.top = `${(placement.button.y / screen.h) * 100}%`;
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const key = targetKey(target);
+      this.inlineComposerTargetId = this.inlineComposerTargetId === key ? null : key;
+      this._renderInlineControls();
+    });
+    this.overlay.appendChild(button);
+
+    if (this.inlineComposerTargetId !== targetKey(target)) return;
+    const popover = document.createElement('div');
+    popover.className = 'codex-review-inline-popover';
+    popover.style.left = `${(placement.popover.x / screen.w) * 100}%`;
+    popover.style.top = `${(placement.popover.y / screen.h) * 100}%`;
+    popover.innerHTML =
+      '<textarea class="codex-review-inline-note" data-role="inline-note" rows="2" ' +
+        'placeholder="Leave a comment"></textarea>' +
+      '<div class="codex-review-inline-actions">' +
+        '<span class="codex-review-inline-status" data-role="inline-status"></span>' +
+        '<button type="button" class="btn" data-act="inline-cancel">Cancel</button>' +
+        '<button type="button" class="btn btn-primary" data-act="inline-save">Add Comment</button>' +
+      '</div>';
+    popover.addEventListener('click', (event) => event.stopPropagation());
+    popover.addEventListener('mousedown', (event) => event.stopPropagation());
+    popover.querySelector('[data-act="inline-cancel"]').addEventListener('click', () => {
+      this.inlineComposerTargetId = null;
+      this._renderInlineControls();
+    });
+    const textarea = popover.querySelector('[data-role="inline-note"]');
+    popover.querySelector('[data-act="inline-save"]').addEventListener('click', () => {
+      this._saveInlineComment(textarea ? textarea.value : '');
+    });
+    this.overlay.appendChild(popover);
+    if (textarea) textarea.focus();
+  };
+
+  CodexReviewMode.prototype._clearInlineControls = function () {
+    if (!this.overlay) return;
+    this.overlay.querySelectorAll('.codex-review-inline-add, .codex-review-inline-popover')
+      .forEach((el) => el.remove());
   };
 
   CodexReviewMode.prototype._commentsListHTML = function (comments, emptyText) {
@@ -649,6 +740,11 @@
 
   CodexReviewMode.prototype._setStatus = function (message) {
     const status = this.panel && this.panel.querySelector('[data-role="status"]');
+    if (status) status.textContent = message || '';
+  };
+
+  CodexReviewMode.prototype._setInlineStatus = function (message) {
+    const status = this.overlay && this.overlay.querySelector('[data-role="inline-status"]');
     if (status) status.textContent = message || '';
   };
 
@@ -788,6 +884,26 @@
     const x2 = Math.max(a.x, b.x);
     const y2 = Math.max(a.y, b.y);
     return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+  }
+
+  function inlinePlacement(frame, screen) {
+    const buttonSize = 22;
+    const gap = 6;
+    const popoverWidth = Math.min(250, Math.max(190, screen.w - 24));
+    const popoverHeight = 98;
+    const preferRight = frame.x + frame.width + gap + popoverWidth <= screen.w - 8;
+    const buttonX = preferRight
+      ? frame.x + frame.width + gap
+      : Math.max(8, frame.x - buttonSize - gap);
+    const buttonY = clamp(frame.y + Math.min(frame.height / 2, 18) - buttonSize / 2, 8, screen.h - buttonSize - 8);
+    const popoverX = preferRight
+      ? frame.x + frame.width + gap
+      : Math.max(8, frame.x - popoverWidth - gap);
+    const popoverY = clamp(buttonY + buttonSize + 6, 8, screen.h - popoverHeight - 8);
+    return {
+      button: { x: buttonX, y: buttonY },
+      popover: { x: popoverX, y: popoverY },
+    };
   }
 
   function clamp(value, min, max) {

@@ -46,7 +46,7 @@ These files belong in the target iOS project, not in Baguette itself.
 3. Enable Codex Review Mode.
 4. Select an overlay element, or draw a manual review area for content that is
    not exposed by accessibility.
-5. Add GUI comments for the selected element.
+5. Add GUI comments from the inline `+` popover or the review drawer.
 6. Repeat selection and commenting for every part that belongs in the same
    review handoff.
 7. Copy all annotation JSON.
