@@ -258,9 +258,9 @@
     box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
   }
 
-  /* Action buttons — Home / Screenshot / App-switcher. */
+  /* Action buttons — one evenly-spaced toolbar cluster. */
   #simNativeView .tb-actions {
-    display: inline-flex; align-items: center; gap: 2px;
+    display: inline-flex; align-items: center; gap: 6px;
   }
   #simNativeView .ico-btn {
     display: inline-flex; align-items: center; justify-content: center;
@@ -453,6 +453,225 @@
     background: var(--nv-text); color: var(--nv-bar-bg);
     border-color: transparent;
   }
+  #simNativeView .codex-review-node.hover,
+  #simNativeView .codex-review-node:hover {
+    background: rgba(37, 99, 235, 0.14) !important;
+    border-color: rgba(37, 99, 235, 0.96) !important;
+  }
+  #simNativeView .codex-review-node.selected {
+    background: rgba(220, 38, 38, 0.12) !important;
+    border-color: rgba(220, 38, 38, 0.96) !important;
+    box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.36);
+  }
+  #simNativeView .codex-review-node.has-comments {
+    background: rgba(245, 158, 11, 0.10) !important;
+    border-color: rgba(245, 158, 11, 0.90) !important;
+  }
+  #simNativeView .codex-review-node.has-comments::after {
+    content: attr(data-comment-count);
+    position: absolute;
+    top: -9px;
+    right: -9px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: #f59e0b;
+    color: #111827;
+    font: 700 10px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.28);
+    pointer-events: none;
+  }
+  #simNativeView .ax-host.review-drawer {
+    width: min(340px, calc(100vw - 32px));
+    max-height: calc(100vh - 112px);
+    padding: 12px;
+    overflow: hidden;
+  }
+  #simNativeView .review-drawer .codex-review-drawer-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: calc(100vh - 154px);
+    overflow: auto;
+    padding-right: 2px;
+  }
+  #simNativeView .codex-review-section {
+    display: grid;
+    gap: 6px;
+  }
+  #simNativeView .codex-review-section-title {
+    color: var(--nv-text-muted);
+    font: 700 10px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  #simNativeView .codex-review-details {
+    font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #simNativeView .codex-review-details div {
+    overflow-wrap: anywhere;
+  }
+  #simNativeView .codex-review-details span {
+    color: var(--nv-text-muted);
+    display: inline-block;
+    width: 58px;
+  }
+  #simNativeView .codex-review-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  #simNativeView .codex-review-note {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 76px;
+    padding: 7px 8px;
+    resize: vertical;
+    border: 1px solid var(--nv-bar-border);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--nv-text);
+    font: 500 11px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  #simNativeView .codex-review-note:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  #simNativeView .codex-review-edit-actions {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px;
+  }
+  #simNativeView .codex-review-empty {
+    color: var(--nv-text-muted);
+    font: 500 11px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  }
+  #simNativeView .codex-review-comment-list {
+    display: grid;
+    gap: 8px;
+  }
+  #simNativeView .codex-review-comment-group {
+    display: grid;
+    gap: 6px;
+    padding: 7px;
+    border: 1px solid var(--nv-bar-border);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.05);
+  }
+  #simNativeView .codex-review-target-link {
+    appearance: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+    font: 700 11px/1.25 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  }
+  #simNativeView .codex-review-target-link span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #simNativeView .codex-review-target-link strong {
+    min-width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: var(--nv-accent);
+    color: var(--nv-accent-text);
+    font: 700 10px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  }
+  #simNativeView .codex-review-comment {
+    display: grid;
+    gap: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--nv-divider);
+  }
+  #simNativeView .codex-review-comment p {
+    margin: 0;
+    color: var(--nv-text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  #simNativeView .codex-review-comment-actions {
+    display: flex;
+    gap: 6px;
+  }
+  #simNativeView .codex-review-comment-actions .btn {
+    flex: 1;
+  }
+  #simNativeView .codex-review-status {
+    min-height: 14px;
+    margin-top: 6px;
+    color: var(--nv-text-muted);
+    font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #simNativeView .codex-review-error {
+    position: absolute;
+    left: 14px;
+    right: 14px;
+    top: 14px;
+    display: grid;
+    gap: 4px;
+    padding: 10px 12px;
+    background: rgba(127, 29, 29, 0.88);
+    border: 1px solid rgba(248, 113, 113, 0.55);
+    border-radius: 10px;
+    color: #fff;
+    font: 12px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  }
+  #simNativeView .codex-review-confirm {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    background: rgba(15, 23, 42, 0.28);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+  }
+  #simNativeView .codex-review-confirm-card {
+    width: min(340px, 100%);
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    background: var(--nv-bar-bg);
+    border: 1px solid var(--nv-bar-border);
+    border-radius: 12px;
+    box-shadow: var(--nv-bar-shadow), var(--nv-bar-inset);
+    color: var(--nv-text);
+    font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  }
+  #simNativeView .codex-review-confirm-title {
+    font: 700 13px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  }
+  #simNativeView .codex-review-confirm-card p {
+    margin: 0;
+    color: var(--nv-text-muted);
+  }
+  #simNativeView .codex-review-confirm-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
 
   /* Preview ribbon — only when opened via file:// */
   #simNativeView .preview-banner {
@@ -488,6 +707,7 @@
                 onclick="window.__nativeSetFormat && window.__nativeSetFormat('mjpeg')">MJPEG</button>
       </div>
 
+      <div class="tb-actions">
       <!-- Actionable-bezel toggle. When active, hardware buttons on
            the bezel become hover-animated, click-able overlays that
            fire SimInput.button(name). Off by default — flat
@@ -517,10 +737,26 @@
               onclick="window.__nativeRotate && window.__nativeRotate()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
              stroke-linecap="round" stroke-linejoin="round" width="17" height="17">
-          <!-- circular arrow over a phone glyph: device + rotation hint -->
-          <rect x="9" y="3" width="6" height="10" rx="1.4"/>
-          <path d="M5 14a7 7 0 0 0 13 2.5"/>
-          <polyline points="18.5 12 18 16.5 13.6 16"/>
+          <path d="M20 12a8 8 0 1 1-2.35-5.65"/>
+          <polyline points="20 4 20 10 14 10"/>
+        </svg>
+      </button>
+
+      <!-- Codex Review Mode. Freezes the live stream, captures one
+           screenshot + AX tree, and builds real DOM overlay targets
+           for annotation JSON. -->
+      <button class="ico-btn" id="nativeReviewToggle"
+              title="Toggle Codex Review Mode"
+              aria-label="Toggle Codex Review Mode"
+              onclick="window.__nativeToggleReview && window.__nativeToggleReview()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"
+             stroke-linecap="round" stroke-linejoin="round" width="18" height="18"
+             aria-hidden="true">
+          <path d="M8.2 5.1a4.1 4.1 0 0 1 6.8-1.4l3.3 3.3a4.1 4.1 0 0 1 1.1 3.8"/>
+          <path d="M15.8 18.9a4.1 4.1 0 0 1-6.8 1.4l-3.3-3.3a4.1 4.1 0 0 1-1.1-3.8"/>
+          <path d="M18.9 8.2a4.1 4.1 0 0 1 1.4 6.8l-3.3 3.3a4.1 4.1 0 0 1-3.8 1.1"/>
+          <path d="M5.1 15.8a4.1 4.1 0 0 1-1.4-6.8l3.3-3.3a4.1 4.1 0 0 1 3.8-1.1"/>
+          <path d="M8.7 8.7h6.6v6.6H8.7z"/>
         </svg>
       </button>
 
@@ -544,7 +780,6 @@
         </svg>
       </button>
 
-      <div class="tb-actions">
         <button class="ico-btn" id="nativeLogsToggle" title="Toggle live log sheet"
                 aria-label="Toggle live log sheet"
                 onclick="window.__nativeToggleLogs && window.__nativeToggleLogs()">

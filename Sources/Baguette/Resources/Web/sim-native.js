@@ -40,6 +40,8 @@
   let keyboardCapture = null;
   let logPanel = null;
   let axInspector = null;
+  let reviewMode = null;
+  let reviewToggleInFlight = false;
   let lastPaintedSize = { w: 0, h: 0 };
   let layout = null;
   let deviceName = '';
@@ -479,6 +481,7 @@
       if (axInspector.isEnabled()) axInspector.disable();
       else axInspector.enable();
     };
+    window.__nativeToggleReview = () => toggleReviewMode();
     // Sidebar-view jump — bounce out of focus mode and into the
     // inline `startStream` layout on `/simulators`. The hash is
     // the cue sim-stream.js reads on load to auto-open the same
@@ -509,12 +512,66 @@
     };
   }
 
+  async function toggleReviewMode() {
+    if (!surface || !window.CodexReviewMode) return;
+    if (reviewToggleInFlight) return;
+    reviewToggleInFlight = true;
+    const btn = document.getElementById('nativeReviewToggle');
+    const panel = document.getElementById('nativeAxHost');
+
+    try {
+      if (reviewMode && reviewMode.isEnabled()) {
+        if (reviewMode.hasComments && reviewMode.hasComments()) {
+          const count = reviewMode.commentCount ? reviewMode.commentCount() : 0;
+          const ok = await confirmReviewDiscard(
+            `Discard ${count} review comment${count === 1 ? '' : 's'} and return to the live stream?`
+          );
+          if (!ok) return;
+        }
+        reviewMode.disable();
+        reviewMode = null;
+        if (btn) btn.classList.remove('active');
+        startSession(pickFormat());
+        wireKeyboard();
+        return;
+      }
+
+      if (axInspector && axInspector.isEnabled()) axInspector.disable();
+      stopInteractiveWiring();
+      if (session) { try { session.stop(); } catch (_) {} session = null; }
+
+      reviewMode = new window.CodexReviewMode({
+        udid,
+        screenArea: surface.screenArea,
+        panel,
+        getDeviceSize: () => frame.screenSize(),
+        onStatus: (text) => {
+          const el = document.getElementById('nativeStatus');
+          if (el) el.textContent = text || '';
+        },
+        onSelect: () => {},
+      });
+      if (btn) btn.classList.add('active');
+      const ok = await reviewMode.enable();
+      if (!ok) {
+        if (btn) btn.classList.remove('active');
+        try { reviewMode.disable(); } catch (_) { /* ignore */ }
+        reviewMode = null;
+        startSession(pickFormat());
+        wireKeyboard();
+      }
+    } finally {
+      reviewToggleInFlight = false;
+    }
+  }
+
   // Surface a selected AX node in the floating `#nativeAxHost`
   // panel. Wraps the inspector's static selection renderer with a
   // header (title + close) so the panel can be dismissed without
   // disabling the inspector itself.
   function renderAxPanel(panel, node) {
     if (!panel) return;
+    panel.classList.remove('review-drawer');
     if (!node) {
       panel.removeAttribute('data-open');
       panel.innerHTML = '';
@@ -573,6 +630,30 @@
   // element, only the bezel image and overlays change.
   function remountFrame() {
     if (!frame) return;
+    if (reviewMode) {
+      if (reviewMode.hasComments && reviewMode.hasComments()) {
+        const count = reviewMode.commentCount ? reviewMode.commentCount() : 0;
+        confirmReviewDiscard(
+          `Discard ${count} review comment${count === 1 ? '' : 's'} and remount the device frame?`
+        ).then((ok) => {
+          if (ok) remountFrameDiscardingReview();
+        });
+        return;
+      }
+      remountFrameDiscardingReview();
+      return;
+    }
+    remountFrameDiscardingReview();
+  }
+
+  function remountFrameDiscardingReview() {
+    if (!frame) return;
+    if (reviewMode) {
+      try { reviewMode.disable(); } catch (_) { /* ignore */ }
+      reviewMode = null;
+      const btn = document.getElementById('nativeReviewToggle');
+      if (btn) btn.classList.remove('active');
+    }
     if (mouseSource) { try { mouseSource.detach(); } catch (_) {} mouseSource = null; }
     if (pinchOverlay) { try { pinchOverlay.clear(); } catch (_) {} pinchOverlay = null; }
     if (keyboardCapture) { try { keyboardCapture.stop(); } catch (_) {} keyboardCapture = null; }
@@ -592,6 +673,42 @@
     wireKeyboard();
   }
 
+  function confirmReviewDiscard(message) {
+    return new Promise((resolve) => {
+      const existing = document.querySelector('.codex-review-confirm');
+      if (existing) existing.remove();
+      const shell = document.createElement('div');
+      shell.className = 'codex-review-confirm';
+      shell.innerHTML =
+        '<div class="codex-review-confirm-card" role="dialog" aria-modal="true" aria-labelledby="codexReviewConfirmTitle">' +
+          '<div id="codexReviewConfirmTitle" class="codex-review-confirm-title">Discard review comments?</div>' +
+          '<p>' + escapeHTML(message) + '</p>' +
+          '<div class="codex-review-confirm-actions">' +
+            '<button class="btn" data-act="cancel">Cancel</button>' +
+            '<button class="btn btn-primary" data-act="ok">OK</button>' +
+          '</div>' +
+        '</div>';
+      const finish = (ok) => {
+        shell.remove();
+        resolve(ok);
+      };
+      shell.addEventListener('click', (event) => {
+        if (event.target === shell) finish(false);
+      });
+      shell.querySelector('[data-act="cancel"]').addEventListener('click', () => finish(false));
+      shell.querySelector('[data-act="ok"]').addEventListener('click', () => finish(true));
+      document.getElementById('simNativeView').appendChild(shell);
+      shell.querySelector('[data-act="cancel"]').focus();
+    });
+  }
+
+  function stopInteractiveWiring() {
+    if (mouseSource) { try { mouseSource.detach(); } catch (_) {} mouseSource = null; }
+    if (pinchOverlay) { try { pinchOverlay.clear(); } catch (_) {} pinchOverlay = null; }
+    if (keyboardCapture) { try { keyboardCapture.stop(); } catch (_) {} keyboardCapture = null; }
+    simInput = null;
+  }
+
   function reflectActionable() {
     const btn = document.getElementById('nativeActionableToggle');
     if (btn) btn.classList.toggle('active', actionableEnabled());
@@ -603,7 +720,14 @@
       try { if (mouseSource) mouseSource.detach(); } catch (_) { /* ignore */ }
       try { if (keyboardCapture) keyboardCapture.stop(); } catch (_) { /* ignore */ }
       try { if (axInspector) axInspector.detach(); } catch (_) { /* ignore */ }
+      try { if (reviewMode) reviewMode.disable(); } catch (_) { /* ignore */ }
     });
+  }
+
+  function escapeHTML(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[c]);
   }
 
   // Take a snapshot from the live canvas and trigger a download. We

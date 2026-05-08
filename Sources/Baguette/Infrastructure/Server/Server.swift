@@ -24,6 +24,7 @@ import NIOCore
 ///   GET  /simulators/:udid/bezel.png        → composite PNG
 ///   POST /simulators/:udid/input            → gesture     (TODO)
 ///   GET  /simulators/:udid/screenshot.jpg   → JPEG (?quality=&scale=)
+///   GET  /simulators/:udid/review-snapshot.json → screenshot + AX tree JSON
 ///   WS   /simulators/:udid/stream?format=   → frames      (TODO)
 ///   GET  /<file>.{html,js,css}              → static UI asset
 ///
@@ -161,6 +162,14 @@ struct Server: Sendable {
         // and `?scale=` mirror the WS stream knobs for parity.
         router.get("/simulators/:udid/screenshot.jpg") { [simulators] r, _ in
             await Self.screenshotJPEG(
+                udid: Self.udidParam(r),
+                quality: r.uri.queryParameters.get("quality").flatMap(Double.init) ?? 0.85,
+                scale: r.uri.queryParameters.get("scale").flatMap(Int.init) ?? 1,
+                simulators: simulators
+            )
+        }
+        router.get("/simulators/:udid/review-snapshot.json") { [simulators] r, _ in
+            await Self.reviewSnapshotJSON(
                 udid: Self.udidParam(r),
                 quality: r.uri.queryParameters.get("quality").flatMap(Double.init) ?? 0.85,
                 scale: r.uri.queryParameters.get("scale").flatMap(Int.init) ?? 1,
@@ -348,6 +357,91 @@ struct Server: Sendable {
         } catch {
             return errorJSON(String(describing: error), status: .internalServerError)
         }
+    }
+
+    private static func reviewSnapshotJSON(
+        udid: String,
+        quality: Double,
+        scale: Int,
+        simulators: any Simulators
+    ) async -> Response {
+        do {
+            let json = try await reviewSnapshotJSONString(
+                udid: udid,
+                quality: quality,
+                scale: scale,
+                simulators: simulators
+            ) { sim, quality, scale in
+                try await ScreenSnapshot.capture(
+                    screen: sim.screen(),
+                    quality: quality,
+                    scale: max(1, scale)
+                )
+            } describe: { sim in
+                try sim.accessibility().describeAll()
+            }
+            return Response(
+                status: .ok,
+                headers: [.contentType: "application/json", .cacheControl: "no-cache"],
+                body: .init(byteBuffer: ByteBuffer(string: json))
+            )
+        } catch ReviewSnapshotError.unknownDevice {
+            return errorJSON("unknown udid: \(udid)", status: .notFound)
+        } catch ReviewSnapshotError.noAccessibilityData {
+            return errorJSON("no accessibility data", status: .internalServerError)
+        } catch {
+            return errorJSON(String(describing: error), status: .internalServerError)
+        }
+    }
+
+    enum ReviewSnapshotError: Error, Equatable {
+        case unknownDevice
+        case noAccessibilityData
+    }
+
+    static func reviewSnapshotJSONString(
+        udid: String,
+        quality: Double,
+        scale: Int,
+        simulators: any Simulators,
+        capture: (any Simulator, Double, Int) async throws -> Data,
+        describe: (any Simulator) throws -> AXNode?
+    ) async throws -> String {
+        guard !udid.isEmpty, let sim = simulators.find(udid: udid) else {
+            throw ReviewSnapshotError.unknownDevice
+        }
+        let snapshotId = iso8601SnapshotId()
+        let tree = try describe(sim)
+        guard let tree else { throw ReviewSnapshotError.noAccessibilityData }
+        let screenshot = try await capture(sim, quality, max(1, scale))
+        let axTree = try jsonObject(from: tree.json)
+        let payload: [String: Any] = [
+            "snapshotId": snapshotId,
+            "createdAt": snapshotId,
+            "device": [
+                "name": sim.name,
+                "runtime": sim.runtime,
+                "udid": sim.udid,
+            ],
+            "screen": [
+                "width": tree.frame.size.width,
+                "height": tree.frame.size.height,
+            ],
+            "screenshot": [
+                "mediaType": "image/jpeg",
+                "dataUrl": "data:image/jpeg;base64,\(screenshot.base64EncodedString())",
+            ],
+            "axTree": axTree,
+            "tool": [
+                "name": "baguette-codex-review-mode",
+                "version": "1",
+            ],
+        ]
+        let data = try JSONSerialization.data(
+            withJSONObject: payload,
+            options: [.sortedKeys]
+        )
+        return String(decoding: data, as: UTF8.self)
     }
 
     private static func bezelPNG(
@@ -841,6 +935,19 @@ private func envelope(forBatch lines: [String]) -> String {
     }
     s.append("]}")
     return s
+}
+
+private func iso8601SnapshotId() -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.string(from: Date())
+}
+
+private func jsonObject(from json: String) throws -> Any {
+    guard let data = json.data(using: .utf8) else {
+        return NSNull()
+    }
+    return try JSONSerialization.jsonObject(with: data)
 }
 
 private func contentType(for filename: String) -> String {
