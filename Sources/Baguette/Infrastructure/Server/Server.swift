@@ -24,6 +24,11 @@ import NIOCore
 ///   GET  /simulators/:udid/bezel.png        → composite PNG
 ///   POST /simulators/:udid/input            → gesture     (TODO)
 ///   GET  /simulators/:udid/screenshot.jpg   → JPEG (?quality=&scale=)
+///   GET  /simulators/:udid/review-snapshot.json → screenshot + AX tree JSON
+///   PUT  /simulators/:udid/review-annotations.json → save CX review annotations
+///   GET  /simulators/:udid/review-annotations.json → latest saved annotations
+///   DEL  /simulators/:udid/review-annotations.json → clear saved annotations
+///   GET  /review/status.json                → review API status
 ///   WS   /simulators/:udid/stream?format=   → frames      (TODO)
 ///   GET  /<file>.{html,js,css}              → static UI asset
 ///
@@ -34,17 +39,20 @@ import NIOCore
 struct Server: Sendable {
     let simulators: any Simulators
     let chromes: any Chromes
+    let reviewAnnotations: ReviewAnnotationStore
     let host: String
     let port: Int
 
     init(
         simulators: any Simulators,
         chromes: any Chromes,
+        reviewAnnotations: ReviewAnnotationStore = ReviewAnnotationStore(),
         host: String = "127.0.0.1",
         port: Int = 8421
     ) {
         self.simulators = simulators
         self.chromes = chromes
+        self.reviewAnnotations = reviewAnnotations
         self.host = host
         self.port = port
     }
@@ -75,6 +83,9 @@ struct Server: Sendable {
         router.get("/") { _, _ in Self.redirect(to: "/simulators") }
         router.get("/simulators") { _, _ in Self.staticAsset("sim.html") }
         router.get("/simulators.json") { [simulators] _, _ in Self.listJSON(simulators) }
+        router.get("/review/status.json") { [simulators, reviewAnnotations] _, _ in
+            await Self.reviewStatusJSON(simulators: simulators, store: reviewAnnotations)
+        }
 
         // Stream page — same sim.html, JS routes the inner view based on URL.
         router.get("/simulators/:udid") { _, _ in Self.staticAsset("sim.html") }
@@ -165,6 +176,36 @@ struct Server: Sendable {
                 quality: r.uri.queryParameters.get("quality").flatMap(Double.init) ?? 0.85,
                 scale: r.uri.queryParameters.get("scale").flatMap(Int.init) ?? 1,
                 simulators: simulators
+            )
+        }
+        router.get("/simulators/:udid/review-snapshot.json") { [simulators] r, _ in
+            await Self.reviewSnapshotJSON(
+                udid: Self.udidParam(r),
+                quality: r.uri.queryParameters.get("quality").flatMap(Double.init) ?? 0.85,
+                scale: r.uri.queryParameters.get("scale").flatMap(Int.init) ?? 1,
+                simulators: simulators
+            )
+        }
+        router.put("/simulators/:udid/review-annotations.json") { [simulators, reviewAnnotations] r, _ in
+            await Self.putReviewAnnotations(
+                udid: Self.udidParam(r),
+                request: r,
+                simulators: simulators,
+                store: reviewAnnotations
+            )
+        }
+        router.get("/simulators/:udid/review-annotations.json") { [simulators, reviewAnnotations] r, _ in
+            await Self.getReviewAnnotations(
+                udid: Self.udidParam(r),
+                simulators: simulators,
+                store: reviewAnnotations
+            )
+        }
+        router.delete("/simulators/:udid/review-annotations.json") { [simulators, reviewAnnotations] r, _ in
+            await Self.deleteReviewAnnotations(
+                udid: Self.udidParam(r),
+                simulators: simulators,
+                store: reviewAnnotations
             )
         }
 
@@ -345,6 +386,184 @@ struct Server: Sendable {
                 headers: [.contentType: "image/jpeg", .cacheControl: "no-cache"],
                 body: .init(byteBuffer: ByteBuffer(data: bytes))
             )
+        } catch {
+            return errorJSON(String(describing: error), status: .internalServerError)
+        }
+    }
+
+    private static func reviewSnapshotJSON(
+        udid: String,
+        quality: Double,
+        scale: Int,
+        simulators: any Simulators
+    ) async -> Response {
+        do {
+            let json = try await reviewSnapshotJSONString(
+                udid: udid,
+                quality: quality,
+                scale: scale,
+                simulators: simulators
+            ) { sim, quality, scale in
+                try await ScreenSnapshot.capture(
+                    screen: sim.screen(),
+                    quality: quality,
+                    scale: max(1, scale)
+                )
+            } describe: { sim in
+                try sim.accessibility().describeAll()
+            }
+            return Response(
+                status: .ok,
+                headers: [.contentType: "application/json", .cacheControl: "no-cache"],
+                body: .init(byteBuffer: ByteBuffer(string: json))
+            )
+        } catch ReviewSnapshotError.unknownDevice {
+            return errorJSON("unknown udid: \(udid)", status: .notFound)
+        } catch ReviewSnapshotError.noAccessibilityData {
+            return errorJSON("no accessibility data", status: .internalServerError)
+        } catch {
+            return errorJSON(String(describing: error), status: .internalServerError)
+        }
+    }
+
+    enum ReviewSnapshotError: Error, Equatable {
+        case unknownDevice
+        case noAccessibilityData
+    }
+
+    static func reviewSnapshotJSONString(
+        udid: String,
+        quality: Double,
+        scale: Int,
+        simulators: any Simulators,
+        capture: (any Simulator, Double, Int) async throws -> Data,
+        describe: (any Simulator) throws -> AXNode?
+    ) async throws -> String {
+        guard !udid.isEmpty, let sim = simulators.find(udid: udid) else {
+            throw ReviewSnapshotError.unknownDevice
+        }
+        let snapshotId = iso8601SnapshotId()
+        let tree = try describe(sim)
+        guard let tree else { throw ReviewSnapshotError.noAccessibilityData }
+        let screenshot = try await capture(sim, quality, max(1, scale))
+        let axTree = try jsonObject(from: tree.json)
+        let payload: [String: Any] = [
+            "snapshotId": snapshotId,
+            "createdAt": snapshotId,
+            "device": [
+                "name": sim.name,
+                "runtime": sim.runtime,
+                "udid": sim.udid,
+            ],
+            "screen": [
+                "width": tree.frame.size.width,
+                "height": tree.frame.size.height,
+            ],
+            "screenshot": [
+                "mediaType": "image/jpeg",
+                "dataUrl": "data:image/jpeg;base64,\(screenshot.base64EncodedString())",
+            ],
+            "axTree": axTree,
+            "tool": [
+                "name": "baguette-codex-review-mode",
+                "version": "1",
+            ],
+        ]
+        let data = try JSONSerialization.data(
+            withJSONObject: payload,
+            options: [.sortedKeys]
+        )
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func putReviewAnnotations(
+        udid: String,
+        request: Request,
+        simulators: any Simulators,
+        store: ReviewAnnotationStore
+    ) async -> Response {
+        guard !udid.isEmpty, simulators.find(udid: udid) != nil else {
+            return errorJSON("unknown udid: \(udid)", status: .notFound)
+        }
+        do {
+            var request = request
+            let body = try await request.collectBody(upTo: 2_000_000)
+            let record = try await store.put(udid: udid, data: Data(buffer: body))
+            return try jsonResponse(ReviewAnnotationStore.responseObject(for: record))
+        } catch ReviewAnnotationStoreError.malformedJSON {
+            return errorJSON("malformed review annotation JSON", status: .badRequest)
+        } catch {
+            return errorJSON(String(describing: error), status: .internalServerError)
+        }
+    }
+
+    private static func getReviewAnnotations(
+        udid: String,
+        simulators: any Simulators,
+        store: ReviewAnnotationStore
+    ) async -> Response {
+        guard !udid.isEmpty, simulators.find(udid: udid) != nil else {
+            return errorJSON("unknown udid: \(udid)", status: .notFound)
+        }
+        guard let record = await store.get(udid: udid) else {
+            return errorJSON("no review annotations for udid: \(udid)", status: .notFound)
+        }
+        do {
+            return try jsonResponse(ReviewAnnotationStore.responseObject(for: record))
+        } catch {
+            return errorJSON(String(describing: error), status: .internalServerError)
+        }
+    }
+
+    private static func deleteReviewAnnotations(
+        udid: String,
+        simulators: any Simulators,
+        store: ReviewAnnotationStore
+    ) async -> Response {
+        guard !udid.isEmpty, simulators.find(udid: udid) != nil else {
+            return errorJSON("unknown udid: \(udid)", status: .notFound)
+        }
+        await store.delete(udid: udid)
+        return jsonOK
+    }
+
+    private static func reviewStatusJSON(
+        simulators: any Simulators,
+        store: ReviewAnnotationStore
+    ) async -> Response {
+        let records = await store.all()
+        let reviews = records.map(ReviewAnnotationStore.summaryObject(for:))
+        let devices = simulators.all.map { sim in
+            [
+                "udid": sim.udid,
+                "name": sim.name,
+                "runtime": sim.runtime,
+                "state": sim.state.description,
+            ]
+        }
+        let object: [String: Any] = [
+            "ok": true,
+            "baguette": [
+                "version": baguetteVersion,
+            ],
+            "cxReview": [
+                "version": baguetteCXReviewVersion,
+                "reviewApiVersion": ReviewAnnotationStore.reviewApiVersion,
+                "annotationPayloadVersion": ReviewAnnotationStore.annotationPayloadVersion,
+            ],
+            "plugin": [
+                "version": ReviewAnnotationStore.pluginVersion,
+                "mcpVersion": ReviewAnnotationStore.mcpVersion,
+                "templateVersion": ReviewAnnotationStore.templateVersion,
+            ],
+            "compatible": true,
+            "reviewCount": reviews.count,
+            "latestUpdatedAt": records.map(\.updatedAt).max() ?? NSNull(),
+            "reviews": reviews,
+            "simulators": devices,
+        ]
+        do {
+            return try jsonResponse(object)
         } catch {
             return errorJSON(String(describing: error), status: .internalServerError)
         }
@@ -747,6 +966,123 @@ struct Server: Sendable {
     }
 }
 
+// MARK: - review annotation store
+
+struct ReviewAnnotationRecord: Sendable, Equatable {
+    let udid: String
+    let payloadJSONString: String
+    let storedAt: String
+    let updatedAt: String
+    let annotationCount: Int
+    let manualRectCount: Int
+    let snapshotId: String?
+}
+
+enum ReviewAnnotationStoreError: Error, Equatable {
+    case malformedJSON
+}
+
+actor ReviewAnnotationStore {
+    static let reviewApiVersion = baguetteReviewAPIVersion
+    static let annotationPayloadVersion = baguetteAnnotationPayloadVersion
+    static let pluginVersion = baguetteCXReviewVersion
+    static let mcpVersion = baguetteCXReviewVersion
+    static let templateVersion = baguetteCXReviewVersion
+
+    private var records: [String: ReviewAnnotationRecord] = [:]
+
+    func put(udid: String, data: Data) throws -> ReviewAnnotationRecord {
+        let parsed = try Self.parsePayload(data)
+        let now = iso8601SnapshotId()
+        let record = ReviewAnnotationRecord(
+            udid: udid,
+            payloadJSONString: parsed.payloadJSONString,
+            storedAt: records[udid]?.storedAt ?? now,
+            updatedAt: now,
+            annotationCount: parsed.annotationCount,
+            manualRectCount: parsed.manualRectCount,
+            snapshotId: parsed.snapshotId
+        )
+        records[udid] = record
+        return record
+    }
+
+    func get(udid: String) -> ReviewAnnotationRecord? {
+        records[udid]
+    }
+
+    func delete(udid: String) {
+        records.removeValue(forKey: udid)
+    }
+
+    func all() -> [ReviewAnnotationRecord] {
+        records.values.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    static func responseObject(for record: ReviewAnnotationRecord) throws -> [String: Any] {
+        [
+            "ok": true,
+            "reviewApiVersion": reviewApiVersion,
+            "annotationPayloadVersion": annotationPayloadVersion,
+            "storedAt": record.storedAt,
+            "updatedAt": record.updatedAt,
+            "annotationCount": record.annotationCount,
+            "manualRectCount": record.manualRectCount,
+            "payload": try payloadObject(from: record.payloadJSONString),
+        ]
+    }
+
+    static func summaryObject(for record: ReviewAnnotationRecord) -> [String: Any] {
+        [
+            "udid": record.udid,
+            "snapshotId": record.snapshotId ?? NSNull(),
+            "storedAt": record.storedAt,
+            "updatedAt": record.updatedAt,
+            "annotationCount": record.annotationCount,
+            "manualRectCount": record.manualRectCount,
+        ]
+    }
+
+    private static func parsePayload(_ data: Data) throws -> (
+        payloadJSONString: String,
+        annotationCount: Int,
+        manualRectCount: Int,
+        snapshotId: String?
+    ) {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            JSONSerialization.isValidJSONObject(object)
+        else {
+            throw ReviewAnnotationStoreError.malformedJSON
+        }
+        let annotations = object["annotations"] as? [[String: Any]] ?? []
+        var annotationCount = 0
+        var manualRectCount = 0
+        for annotation in annotations {
+            let comments = annotation["comments"] as? [[String: Any]] ?? []
+            annotationCount += comments.count
+            let target = annotation["target"] as? [String: Any]
+            if target?["type"] as? String == "manual-rect" ||
+                target?["role"] as? String == "ManualRectangle" {
+                manualRectCount += 1
+            }
+        }
+        let snapshot = object["snapshot"] as? [String: Any]
+        let payloadData = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        return (
+            String(decoding: payloadData, as: UTF8.self),
+            annotationCount,
+            manualRectCount,
+            snapshot?["snapshotId"] as? String
+        )
+    }
+
+    private static func payloadObject(from json: String) throws -> Any {
+        guard let data = json.data(using: .utf8) else { return NSNull() }
+        return try JSONSerialization.jsonObject(with: data)
+    }
+}
+
 // MARK: - tiny response helpers
 
 private let jsonOK = Response(
@@ -754,6 +1090,15 @@ private let jsonOK = Response(
     headers: [.contentType: "application/json"],
     body: .init(byteBuffer: ByteBuffer(string: "{\"ok\":true}"))
 )
+
+private func jsonResponse(_ object: [String: Any], status: HTTPResponse.Status = .ok) throws -> Response {
+    let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    return Response(
+        status: status,
+        headers: [.contentType: "application/json", .cacheControl: "no-cache"],
+        body: .init(byteBuffer: ByteBuffer(data: data))
+    )
+}
 
 private func errorJSON(_ message: String, status: HTTPResponse.Status) -> Response {
     let escaped = message.replacingOccurrences(of: "\"", with: "\\\"")
@@ -841,6 +1186,19 @@ private func envelope(forBatch lines: [String]) -> String {
     }
     s.append("]}")
     return s
+}
+
+private func iso8601SnapshotId() -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.string(from: Date())
+}
+
+private func jsonObject(from json: String) throws -> Any {
+    guard let data = json.data(using: .utf8) else {
+        return NSNull()
+    }
+    return try JSONSerialization.jsonObject(with: data)
 }
 
 private func contentType(for filename: String) -> String {

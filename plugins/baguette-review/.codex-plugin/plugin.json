@@ -1,0 +1,32 @@
+{
+  "name": "baguette-review",
+  "version": "0.1.0",
+  "description": "Use Baguette CX Review Mode from Codex, retrieve review annotations through MCP, and scaffold project-local apply skills.",
+  "author": {
+    "name": "ymt23"
+  },
+  "license": "MIT",
+  "keywords": [
+    "baguette",
+    "ios",
+    "review",
+    "mcp",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Baguette Review",
+    "shortDescription": "Open Baguette CX Mode and retrieve structured UI review annotations",
+    "longDescription": "Use Baguette Review to start or reuse a local Baguette server, open an iOS simulator review URL in the Codex browser, wait for human CX Mode comments, and retrieve annotation JSON for project-side implementation.",
+    "developerName": "ymt23",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": "Open Baguette CX Review Mode for the current iOS simulator and retrieve annotations",
+    "brandColor": "#0A84FF"
+  }
+}
