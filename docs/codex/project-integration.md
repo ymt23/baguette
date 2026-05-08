@@ -9,7 +9,9 @@ local Codex-assisted UI/UX development workflow.
 
 - XcodeBuildMCP handles build, run, test, E2E, logs, and simulator automation.
 - Baguette Codex Review Mode handles screenshot capture, accessibility overlay,
-  element selection, and UI/UX annotation.
+  element selection, UI/UX annotation, and local annotation transport.
+- Baguette Review Plugin/MCP starts or reuses Baguette, opens the review URL,
+  and retrieves saved annotation payloads.
 - Project-local scripts provide stable entry points for app launch, simulator
   selection, and review snapshot capture.
 - Source mapping remains project-local because each app has different module,
@@ -30,14 +32,16 @@ local Codex-assisted UI/UX development workflow.
   policies/
     CODEX_POLICY.md
   skills/
-    simulator-design-review/
+    baguette-review-apply/
       SKILL.md
 Scripts/
   sim-review.sh
   sim-design-context.sh
 ```
 
-These files belong in the target iOS project, not in Baguette itself.
+The `baguette-review-apply` skill can be scaffolded from the Baguette Review
+Plugin template, then customized and versioned by the target iOS project. The
+plugin does not overwrite an existing project-local skill.
 
 ## Basic Workflow
 
@@ -49,7 +53,8 @@ These files belong in the target iOS project, not in Baguette itself.
 5. Add GUI comments from the inline `+` popover or the review drawer.
 6. Repeat selection and commenting for every part that belongs in the same
    review handoff.
-7. Copy all annotation JSON.
+7. Let the project-side agent retrieve annotations through Baguette MCP, or use
+   `Copy all annotations` as a fallback.
 8. Apply the UI/UX changes in the target source code.
 9. Rebuild and relaunch the app.
 10. Capture a new review snapshot.
@@ -99,10 +104,10 @@ project explicitly chooses to track them.
 
 ## Annotation Payload
 
-Review Mode v1 copies annotation JSON to the clipboard. This is the stable
-handoff object for a project-side Codex agent: Baguette identifies screen
-elements and captures review intent, while the target iOS project decides
-source mapping and implementation.
+Review Mode v1 syncs annotation JSON to the Baguette server and keeps clipboard
+copy as a fallback. This is the stable handoff object for a project-side Codex
+agent: Baguette identifies screen elements and captures review intent, while
+the target iOS project decides source mapping and implementation.
 
 The project-side agent should treat `annotations[]` as one review batch for a
 single snapshot. Each entry represents one selected target, and each target can
@@ -199,7 +204,50 @@ nearby visual context, frames, and project source inspection:
 }
 ```
 
-Future transports should treat this payload as the boundary object. MCP sending,
+## Plugin, MCP, and Skill Versioning
+
+Baguette, the Baguette Review Plugin, the MCP server, and the project skill
+template are versioned in this repository and should ship in the same release
+or tag.
+
+Recommended version lines:
+
+```text
+Baguette: 0.1.x
+Plugin:  0.1.x
+MCP:     0.1.x
+Template:0.1.x
+Annotation payload: 1
+Review API: 1
+```
+
+The project-local skill records its template version in frontmatter:
+
+```md
+---
+name: baguette-review-apply
+baguetteReviewTemplateVersion: 0.1.0
+annotationPayloadVersion: 1
+---
+```
+
+When the shared plugin updates, project skills are not updated automatically.
+Use `baguette_project_skill_status` to detect drift and
+`baguette_project_skill_diff` to review template changes. Apply those changes
+to the project-local skill only after human approval.
+
+## MCP Workflow
+
+1. In the target iOS project, run and verify the app with XcodeBuildMCP.
+2. Invoke the `baguette-review` plugin/skill.
+3. Use `baguette_status`; if needed, use `baguette_start`.
+4. Use `baguette_review_url` and open the returned URL in the Codex browser.
+5. Add CX Mode comments in Baguette.
+6. Use `baguette_wait_for_review`.
+7. Use `baguette_get_latest_review`.
+8. Apply the payload with the project-local `baguette-review-apply` skill.
+
+Future transports should treat the annotation payload as the boundary object.
 CX Design Mode comments, file export, or issue-tracker registration can be
 added as transport choices after their receiving contracts are known.
 

@@ -1,0 +1,12 @@
+{
+  "name": "@baguette/review-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "baguette-review-mcp": "./src/server.mjs"
+  },
+  "scripts": {
+    "check": "node --check src/server.mjs"
+  }
+}

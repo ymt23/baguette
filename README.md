@@ -203,6 +203,10 @@ served root for live-iteration without rebuilding.
 | `GET`  | `/simulators/:udid/bezel.png`              | rasterized bezel PNG         |
 | `GET`  | `/simulators/:udid/screenshot.jpg`         | one-shot JPEG of the framebuffer (`?quality=&scale=`) |
 | `GET`  | `/simulators/:udid/review-snapshot.json`   | Codex Review Mode screenshot + AX tree snapshot |
+| `PUT`  | `/simulators/:udid/review-annotations.json` | save current CX review annotations in memory |
+| `GET`  | `/simulators/:udid/review-annotations.json` | read saved CX review annotations |
+| `DELETE` | `/simulators/:udid/review-annotations.json` | clear saved CX review annotations |
+| `GET`  | `/review/status.json`                      | Baguette review API and saved review status |
 | `WS`   | `/simulators/:udid/stream?format=mjpeg|avcc` | live frames + control + input + `describe_ui` |
 | `WS`   | `/simulators/:udid/logs?level=&style=&predicate=&bundleId=` | live unified-log stream (one `{"type":"log","line":…}` text frame per entry) |
 | `GET`  | `/farm`                                    | device-farm HTML             |

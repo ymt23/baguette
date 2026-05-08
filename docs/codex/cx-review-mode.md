@@ -37,13 +37,16 @@ synthetic DOM overlay that Codex can inspect and use as an annotation target.
 7. Add comments either from the inline `+` popover beside the selected target
    or from the review drawer. Edit and delete existing comments in the drawer.
 8. Repeat selection and commenting across multiple targets.
-9. Copy selected or all annotation data for the project-side agent.
+9. Let Review Mode sync annotations to the local Baguette server, or copy
+   selected/all annotation data as a fallback for the project-side agent.
 10. Turn off Review Mode to return to the live stream.
 
 If comments or manual rectangles exist when Review Mode is turned off,
 Baguette asks for confirmation before discarding them and resuming the stream.
 The same confirmation is used when leaving focus mode for the sidebar view.
-v1 review state is session-local and is not persisted by the server.
+v1 review state is session-local in memory. The browser syncs it to the
+Baguette server while Review Mode is active so a project-side agent can fetch
+it through MCP. Confirmed discard deletes the server copy.
 
 ## Synthetic DOM
 
@@ -203,11 +206,35 @@ derived from the iOS accessibility tree:
 }
 ```
 
-v1 does not send annotations through MCP or CX Design Mode directly. The GUI
-comments are the human-facing authoring surface, and the copied JSON is the
-transport-neutral handoff object. A future transport can forward the same
-object through clipboard, file export, MCP, or a CX-native comment surface
-without changing the selection model.
+The browser syncs the same annotation envelope to Baguette:
+
+```http
+PUT    /simulators/:udid/review-annotations.json
+GET    /simulators/:udid/review-annotations.json
+DELETE /simulators/:udid/review-annotations.json
+GET    /review/status.json
+```
+
+The annotation store is in-memory and keyed by UDID. `PUT` accepts the same
+payload as `Copy all annotations` and returns server metadata:
+
+```json
+{
+  "ok": true,
+  "reviewApiVersion": "1",
+  "annotationPayloadVersion": "1",
+  "storedAt": "2026-05-08T17:00:00.000Z",
+  "updatedAt": "2026-05-08T17:00:30.000Z",
+  "annotationCount": 2,
+  "manualRectCount": 1,
+  "payload": {}
+}
+```
+
+MCP, clipboard, file export, and future CX-native comment surfaces should all
+treat this payload as the same boundary object. The current MCP integration is
+a thin wrapper over the Baguette server API; it does not perform project source
+mapping or implementation.
 
 ## Annotation Types
 

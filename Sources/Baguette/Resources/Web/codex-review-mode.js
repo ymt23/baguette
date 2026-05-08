@@ -33,6 +33,10 @@
     this.drawStart = null;
     this.drawPreview = null;
     this.inlineComposerTargetId = null;
+    this.syncTimer = null;
+    this.syncInFlight = false;
+    this.syncDirty = false;
+    this.syncStatus = '';
   }
 
   CodexReviewMode.prototype.enable = async function () {
@@ -56,6 +60,7 @@
       this._renderSnapshot();
       this._renderOverlay();
       this._renderPanel();
+      this._syncAnnotations();
       this.onStatus('Review Mode');
       return true;
     } catch (err) {
@@ -71,6 +76,8 @@
   };
 
   CodexReviewMode.prototype.disable = function () {
+    if (this.snapshot) this._deleteSyncedAnnotations();
+    if (this.syncTimer) window.clearTimeout(this.syncTimer);
     this.enabled = false;
     this.snapshot = null;
     this.nodes = [];
@@ -83,6 +90,10 @@
     this.drawStart = null;
     this.drawPreview = null;
     this.inlineComposerTargetId = null;
+    this.syncTimer = null;
+    this.syncInFlight = false;
+    this.syncDirty = false;
+    this.syncStatus = '';
     if (this.root && this.root.parentNode) this.root.parentNode.removeChild(this.root);
     this.root = null;
     this.image = null;
@@ -315,6 +326,8 @@
         '<div class="codex-review-status" data-role="status"></div>' +
       '</div>';
 
+    if (this.syncStatus) this._setStatus(this.syncStatus);
+
     this.panel.querySelector('[data-role="close"]').addEventListener('click', () => {
       this._clearPanel();
     });
@@ -457,6 +470,7 @@
       const el = this._elementForManualTarget(target, this._screenSize());
       overlay.appendChild(el);
       this._selectTarget(target, el);
+      this._scheduleSync();
     }, true);
   };
 
@@ -505,6 +519,7 @@
     this._refreshOverlayCommentState();
     this._renderPanel();
     this._renderInlineControls();
+    this._scheduleSync();
   };
 
   CodexReviewMode.prototype._saveInlineComment = function (note) {
@@ -527,6 +542,7 @@
     this._refreshOverlayCommentState();
     this._renderPanel();
     this._renderInlineControls();
+    this._scheduleSync();
   };
 
   CodexReviewMode.prototype._deleteComment = function (id) {
@@ -535,6 +551,7 @@
     this._refreshOverlayCommentState();
     this._renderPanel();
     this._renderInlineControls();
+    this._scheduleSync();
   };
 
   CodexReviewMode.prototype._deleteSelectedManualTarget = function () {
@@ -559,6 +576,7 @@
     this._refreshOverlayCommentState();
     this._renderPanel();
     this.onSelect(null);
+    this._scheduleSync();
   };
 
   CodexReviewMode.prototype._renderInlineControls = function () {
@@ -721,6 +739,49 @@
     } catch (err) {
       this._setStatus('Clipboard failed');
     }
+  };
+
+  CodexReviewMode.prototype._scheduleSync = function () {
+    if (!this.enabled || !this.snapshot) return;
+    if (this.syncTimer) window.clearTimeout(this.syncTimer);
+    this.syncTimer = window.setTimeout(() => {
+      this.syncTimer = null;
+      this._syncAnnotations();
+    }, 150);
+  };
+
+  CodexReviewMode.prototype._syncAnnotations = async function () {
+    if (!this.enabled || !this.snapshot) return;
+    if (this.syncInFlight) {
+      this.syncDirty = true;
+      return;
+    }
+    this.syncInFlight = true;
+    this.syncDirty = false;
+    try {
+      const r = await fetch(`/simulators/${encodeURIComponent(this.udid)}/review-annotations.json`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify(this._allAnnotationsPayload()),
+      });
+      if (!r.ok) throw new Error(`sync failed (${r.status})`);
+      this.syncStatus = '';
+    } catch (err) {
+      this.syncStatus = 'Review sync failed';
+      this._setStatus(this.syncStatus);
+    } finally {
+      this.syncInFlight = false;
+      if (this.syncDirty) this._scheduleSync();
+    }
+  };
+
+  CodexReviewMode.prototype._deleteSyncedAnnotations = function () {
+    fetch(`/simulators/${encodeURIComponent(this.udid)}/review-annotations.json`, {
+      method: 'DELETE',
+      cache: 'no-store',
+      keepalive: true,
+    }).catch(() => {});
   };
 
   CodexReviewMode.prototype._renderError = function (err) {
