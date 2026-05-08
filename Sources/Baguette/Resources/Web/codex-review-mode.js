@@ -116,6 +116,7 @@
     if (this.root) this.root.remove();
     const root = document.createElement('div');
     root.className = 'codex-review-root';
+    root.setAttribute('translate', 'no');
     root.style.cssText =
       'position:absolute;inset:0;z-index:8;overflow:hidden;background:transparent;';
 
@@ -261,6 +262,7 @@
     const manualSelected = selected && selected.type === 'manual-rect';
 
     this.panel.setAttribute('data-open', 'true');
+    this.panel.setAttribute('translate', 'no');
     this.panel.classList.add('review-drawer');
     this.panel.innerHTML =
       '<div class="ax-host-head">' +
@@ -277,6 +279,7 @@
         '<section class="codex-review-section">' +
           '<div class="codex-review-section-title">' + (editing ? 'Edit comment' : 'Add comment') + '</div>' +
           '<textarea class="codex-review-note" data-role="note" rows="4" ' +
+            inputSuppressionAttrs() + ' ' +
             'placeholder="Write a review comment for the selected part."' +
             (selected ? '' : ' disabled') + '>' + escapeHTML(draft) + '</textarea>' +
           '<div class="codex-review-edit-actions">' +
@@ -592,10 +595,12 @@
     if (this.inlineComposerTargetId !== targetKey(target)) return;
     const popover = document.createElement('div');
     popover.className = 'codex-review-inline-popover';
+    popover.setAttribute('translate', 'no');
     popover.style.left = `${(placement.popover.x / screen.w) * 100}%`;
     popover.style.top = `${(placement.popover.y / screen.h) * 100}%`;
     popover.innerHTML =
       '<textarea class="codex-review-inline-note" data-role="inline-note" rows="2" ' +
+        inputSuppressionAttrs() + ' ' +
         'placeholder="Leave a comment"></textarea>' +
       '<div class="codex-review-inline-actions">' +
         '<span class="codex-review-inline-status" data-role="inline-status"></span>' +
@@ -731,6 +736,7 @@
   CodexReviewMode.prototype._clearPanel = function () {
     if (!this.panel) return;
     this.panel.removeAttribute('data-open');
+    this.panel.removeAttribute('translate');
     this.panel.classList.remove('review-drawer');
     this.panel.innerHTML = '';
   };
@@ -928,6 +934,10 @@
   function row(k, v) {
     if (v == null || v === '') return '';
     return '<div><span>' + escapeHTML(k) + '</span>' + escapeHTML(v) + '</div>';
+  }
+
+  function inputSuppressionAttrs() {
+    return 'translate="no" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"';
   }
 
   function tooltipFor(n) {

@@ -579,6 +579,7 @@
   function renderAxPanel(panel, node) {
     if (!panel) return;
     panel.classList.remove('review-drawer');
+    panel.removeAttribute('translate');
     if (!node) {
       panel.removeAttribute('data-open');
       panel.innerHTML = '';
