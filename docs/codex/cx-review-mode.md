@@ -32,7 +32,8 @@ synthetic DOM overlay that Codex can inspect and use as an annotation target.
    `GET /simulators/:udid/review-snapshot.json`.
 5. Render the screenshot as a fixed review surface.
 6. Render accessibility nodes as transparent DOM overlay elements.
-7. Select a target element in the overlay.
+7. Select a target element in the overlay, or draw a manual rectangle for
+   content that is not exposed through accessibility.
 8. Add, edit, or delete comments for the selected target.
 9. Repeat selection and commenting across multiple targets.
 10. Copy selected or all annotation data for the project-side agent.
@@ -53,12 +54,24 @@ Each overlay element should expose stable metadata through `data-*` attributes:
 ```html
 <div
   class="codex-review-node"
+  role="button"
+  tabindex="0"
+  aria-roledescription="Baguette review target"
+  aria-label="Review target, ax-node, AXStaticText, Item 0, 0,146 402x57"
+  data-target-type="ax-node"
+  data-target-id="motion.row.0|0.3.1"
   data-ax-id="motion.row.0"
   data-role="AXStaticText"
   data-label="Item 0, Row description for scroll testing, #0"
   data-frame="0,146 402x57"
 ></div>
 ```
+
+Review Mode also displays AX coverage in the drawer. This shows the total AX
+node count, overlay target count, and role counts for important roles such as
+`AXImage`, `AXCell`, `AXTable`, `AXCollection`, and `AXGroup`. A zero count
+means the iOS accessibility tree did not expose that view class or visual
+concept in the current snapshot.
 
 ## Data Model
 
@@ -122,6 +135,8 @@ one `annotations[]` entry:
   "annotations": [
     {
       "target": {
+        "type": "ax-node",
+        "targetId": "motion.row.0|0.3.1",
         "axId": "motion.row.0",
         "role": "AXStaticText",
         "label": "Item 0, Row description for scroll testing, #0",
@@ -152,6 +167,30 @@ one `annotations[]` entry:
     "name": "baguette-codex-review-mode",
     "version": "1"
   }
+}
+```
+
+Manual rectangle targets use the same annotation envelope, but they are not
+derived from the iOS accessibility tree:
+
+```json
+{
+  "target": {
+    "type": "manual-rect",
+    "targetId": "manual-rect-mowxxxx",
+    "axId": null,
+    "role": "ManualRectangle",
+    "label": "Manual rectangle",
+    "value": null,
+    "frame": {
+      "x": 12,
+      "y": 150,
+      "width": 180,
+      "height": 120
+    },
+    "treePath": null
+  },
+  "comments": []
 }
 ```
 
@@ -192,6 +231,11 @@ Example:
 ## Limitations
 
 - Purely decorative SwiftUI elements may not appear in the accessibility tree.
+- UIKit `UIView`, `UIImageView`, `UITableViewCell`, and `UICollectionViewCell`
+  may not appear as separate AX nodes unless the app exposes them through
+  accessibility metadata.
+- Manual rectangles identify a screen region for review, not a source-level
+  UIKit or SwiftUI object.
 - Padding is not available as a direct value; it must be inferred from parent
   and child frames.
 - Review snapshots must be refreshed after scrolling, navigation, or state

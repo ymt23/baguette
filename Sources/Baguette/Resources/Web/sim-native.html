@@ -486,6 +486,18 @@
     box-shadow: 0 1px 4px rgba(15, 23, 42, 0.28);
     pointer-events: none;
   }
+  #simNativeView .codex-review-node.manual-rect {
+    border-style: dashed !important;
+    border-color: rgba(234, 88, 12, 0.95) !important;
+    background: rgba(234, 88, 12, 0.10) !important;
+  }
+  #simNativeView .codex-review-overlay.is-drawing {
+    cursor: crosshair;
+  }
+  #simNativeView .codex-review-draw-preview {
+    border: 1.5px dashed rgba(234, 88, 12, 0.95);
+    background: rgba(234, 88, 12, 0.12);
+  }
   #simNativeView .ax-host.review-drawer {
     width: min(340px, calc(100vw - 32px));
     max-height: calc(100vh - 112px);
@@ -509,6 +521,35 @@
     font: 700 10px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
     letter-spacing: 0.08em;
     text-transform: uppercase;
+  }
+  #simNativeView .codex-review-coverage-summary,
+  #simNativeView .codex-review-coverage-roles {
+    display: grid;
+    gap: 4px;
+  }
+  #simNativeView .codex-review-coverage-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+  #simNativeView .codex-review-coverage-roles {
+    grid-template-columns: 1fr;
+  }
+  #simNativeView .codex-review-coverage-summary div,
+  #simNativeView .codex-review-coverage-roles div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 6px;
+    border: 1px solid var(--nv-bar-border);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  #simNativeView .codex-review-coverage-roles div.is-missing {
+    color: var(--nv-text-muted);
+  }
+  #simNativeView .codex-review-coverage-roles div.is-missing strong {
+    color: #ef4444;
   }
   #simNativeView .codex-review-details {
     font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;

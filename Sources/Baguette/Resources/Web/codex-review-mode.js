@@ -9,6 +9,7 @@
   const TOOL_VERSION = '1';
   const COMMENT_TYPE = 'design-comment';
   const SNAPSHOT_TIMEOUT_MS = 10000;
+  const IMPORTANT_ROLES = ['AXImage', 'AXCell', 'AXTable', 'AXCollection', 'AXGroup'];
 
   function CodexReviewMode(opts) {
     this.udid = opts.udid;
@@ -19,6 +20,7 @@
     this.onSelect = opts.onSelect || (() => {});
     this.snapshot = null;
     this.nodes = [];
+    this.coverage = null;
     this.selected = null;
     this.enabled = false;
     this.root = null;
@@ -26,6 +28,10 @@
     this.overlay = null;
     this.comments = [];
     this.editingCommentId = null;
+    this.manualTargets = [];
+    this.drawing = false;
+    this.drawStart = null;
+    this.drawPreview = null;
   }
 
   CodexReviewMode.prototype.enable = async function () {
@@ -67,9 +73,14 @@
     this.enabled = false;
     this.snapshot = null;
     this.nodes = [];
+    this.coverage = null;
     this.selected = null;
     this.comments = [];
     this.editingCommentId = null;
+    this.manualTargets = [];
+    this.drawing = false;
+    this.drawStart = null;
+    this.drawPreview = null;
     if (this.root && this.root.parentNode) this.root.parentNode.removeChild(this.root);
     this.root = null;
     this.image = null;
@@ -109,6 +120,7 @@
     overlay.className = 'codex-review-overlay';
     overlay.style.cssText =
       'position:absolute;inset:0;z-index:2;pointer-events:auto;';
+    this._wireManualDrawing(overlay);
 
     root.appendChild(img);
     root.appendChild(overlay);
@@ -133,72 +145,106 @@
     this.nodes = flattenAXTree(this.snapshot.axTree);
     const screen = this._screenSize();
     const visible = this.nodes.filter((entry) => isRenderable(entry.node, screen));
+    this.coverage = coverageFor(this.nodes, visible);
     for (const entry of visible) {
-      const el = document.createElement('div');
-      const n = entry.node;
-      const f = n.frame;
-      const axId = axIdFor(entry);
-      el.className = 'codex-review-node';
-      el.dataset.axId = axId;
-      el.dataset.role = n.role || '';
-      el.dataset.label = n.label || n.title || '';
-      el.dataset.frame = frameString(f);
-      el.dataset.treePath = treePathString(entry.path);
-      el.title = tooltipFor(n);
-      el.style.cssText =
-        'position:absolute;box-sizing:border-box;border:1px solid rgba(37,99,235,0.62);' +
-        'background:rgba(37,99,235,0.045);cursor:crosshair;pointer-events:auto;' +
-        `left:${(f.x / screen.w) * 100}%;top:${(f.y / screen.h) * 100}%;` +
-        `width:${(f.width / screen.w) * 100}%;height:${(f.height / screen.h) * 100}%;` +
-        `z-index:${10 + entry.path.length};`;
-      el.addEventListener('mouseenter', () => el.classList.add('hover'));
-      el.addEventListener('mouseleave', () => el.classList.remove('hover'));
-      el.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this._select(entry, el);
-      });
-      this.overlay.appendChild(el);
+      this.overlay.appendChild(this._elementForAXEntry(entry, screen));
+    }
+    for (const target of this.manualTargets) {
+      this.overlay.appendChild(this._elementForManualTarget(target, screen));
     }
     this._refreshOverlayCommentState();
   };
 
-  CodexReviewMode.prototype._select = function (entry, el) {
+  CodexReviewMode.prototype._elementForAXEntry = function (entry, screen) {
+    const el = document.createElement('div');
+    const n = entry.node;
+    const f = n.frame;
+    const target = nodePayload(n, axIdFor(entry), entry.path);
+    el.className = 'codex-review-node';
+    this._applyTargetMetadata(el, target, tooltipFor(n));
+    el.style.cssText =
+      baseTargetStyle(f, screen, 10 + entry.path.length) +
+      'border:1px solid rgba(37,99,235,0.62);background:rgba(37,99,235,0.045);';
+    el.addEventListener('mouseenter', () => el.classList.add('hover'));
+    el.addEventListener('mouseleave', () => el.classList.remove('hover'));
+    el.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (this.drawing) return;
+      this._selectTarget(target, el);
+    });
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      this._selectTarget(target, el);
+    });
+    return el;
+  };
+
+  CodexReviewMode.prototype._elementForManualTarget = function (target, screen) {
+    const el = document.createElement('div');
+    el.className = 'codex-review-node manual-rect';
+    this._applyTargetMetadata(el, target, target.label || 'Manual rectangle');
+    el.style.cssText =
+      baseTargetStyle(target.frame, screen, 2000) +
+      'border:1.5px dashed rgba(234,88,12,0.95);background:rgba(234,88,12,0.10);';
+    el.addEventListener('mouseenter', () => el.classList.add('hover'));
+    el.addEventListener('mouseleave', () => el.classList.remove('hover'));
+    el.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (this.drawing) return;
+      this._selectTarget(target, el);
+    });
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      this._selectTarget(target, el);
+    });
+    return el;
+  };
+
+  CodexReviewMode.prototype._applyTargetMetadata = function (el, target, title) {
+    el.dataset.targetType = target.type;
+    el.dataset.targetId = target.targetId;
+    el.dataset.axId = target.axId || '';
+    el.dataset.role = target.role || '';
+    el.dataset.label = target.label || '';
+    el.dataset.frame = frameString(target.frame);
+    el.dataset.treePath = target.treePath || '';
+    el.title = title || targetLabel(target);
+    el.setAttribute('role', 'button');
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('aria-roledescription', 'Baguette review target');
+    el.setAttribute('aria-label', ariaLabelForTarget(target));
+  };
+
+  CodexReviewMode.prototype._selectTarget = function (target, el) {
     if (this.overlay) {
       this.overlay.querySelectorAll('.codex-review-node.selected')
         .forEach((node) => node.classList.remove('selected'));
     }
-    el.classList.add('selected');
-    this.selected = {
-      entry,
-      axId: axIdFor(entry),
-    };
+    if (el) el.classList.add('selected');
+    this.selected = { target };
     this._renderPanel();
-    this.onSelect(entry.node);
+    this.onSelect(target.type === 'ax-node' ? target : null);
   };
 
   CodexReviewMode.prototype._selectByTarget = function (target) {
     if (!target || !this.overlay) return;
-    const match = this.nodes.find((entry) => {
-      const axId = axIdFor(entry);
-      return axId === target.axId && treePathString(entry.path) === target.treePath;
-    });
-    if (!match) return;
     const el = Array.from(this.overlay.querySelectorAll('.codex-review-node')).find((node) => {
-      return node.dataset.axId === target.axId && node.dataset.treePath === target.treePath;
+      return node.dataset.targetId === target.targetId;
     });
     if (!el) return;
-    this._select(match, el);
+    this._selectTarget(target, el);
   };
 
   CodexReviewMode.prototype._renderPanel = function () {
     if (!this.panel) return;
-    const selected = this.selected;
-    const node = selected && selected.entry && selected.entry.node;
-    const frame = node && node.frame || {};
+    const selected = this.selected && this.selected.target;
     const editing = this._editingComment();
     const draft = editing ? editing.note : '';
-    const selectedCount = selected ? this._commentsForTarget(selectedTargetKey(selected)).length : 0;
+    const selectedCount = selected ? this._commentsForTarget(targetKey(selected)).length : 0;
     const canCopySelected = selected && selectedCount > 0;
 
     this.panel.setAttribute('data-open', 'true');
@@ -209,24 +255,28 @@
         '<button class="ax-host-close" data-role="close" aria-label="Dismiss">×</button>' +
       '</div>' +
       '<div class="codex-review-drawer-body">' +
+        this._coverageHTML() +
         '<section class="codex-review-section">' +
           '<div class="codex-review-section-title">Target</div>' +
-          (node
-            ? '<div class="codex-review-details">' +
-                row('role', node.role) +
-                row('label', node.label || node.title) +
-                row('id', selected.axId) +
-                row('frame', frameString(frame)) +
-              '</div>'
-            : '<div class="codex-review-empty">Select an overlay target to add comments.</div>') +
+          (selected ? this._targetDetailsHTML(selected) :
+            '<div class="codex-review-empty">Select an overlay target to add comments.</div>') +
+        '</section>' +
+        '<section class="codex-review-section">' +
+          '<div class="codex-review-section-title">Manual target</div>' +
+          '<div class="codex-review-actions">' +
+            '<button class="btn" data-act="draw-rect">' + (this.drawing ? 'Cancel drawing' : 'Draw rectangle') + '</button>' +
+          '</div>' +
+          '<div class="codex-review-empty">' +
+            (this.drawing ? 'Drag on the snapshot to create a manual target.' : 'Use this for images, cells, spacing, and views missing from AX.') +
+          '</div>' +
         '</section>' +
         '<section class="codex-review-section">' +
           '<div class="codex-review-section-title">' + (editing ? 'Edit comment' : 'Add comment') + '</div>' +
           '<textarea class="codex-review-note" data-role="note" rows="4" ' +
             'placeholder="Write a review comment for the selected part."' +
-            (node ? '' : ' disabled') + '>' + escapeHTML(draft) + '</textarea>' +
+            (selected ? '' : ' disabled') + '>' + escapeHTML(draft) + '</textarea>' +
           '<div class="codex-review-edit-actions">' +
-            '<button class="btn btn-primary" data-act="save-comment" ' + (node ? '' : 'disabled') + '>' +
+            '<button class="btn btn-primary" data-act="save-comment" ' + (selected ? '' : 'disabled') + '>' +
               (editing ? 'Save comment' : 'Add comment') +
             '</button>' +
             (editing ? '<button class="btn" data-act="cancel-edit">Cancel</button>' : '') +
@@ -246,6 +296,9 @@
 
     this.panel.querySelector('[data-role="close"]').addEventListener('click', () => {
       this._clearPanel();
+    });
+    this.panel.querySelector('[data-act="draw-rect"]').addEventListener('click', () => {
+      this._toggleDrawing();
     });
     const note = this.panel.querySelector('[data-role="note"]');
     const save = this.panel.querySelector('[data-act="save-comment"]');
@@ -294,6 +347,103 @@
     });
   };
 
+  CodexReviewMode.prototype._coverageHTML = function () {
+    if (!this.coverage) return '';
+    const rows = IMPORTANT_ROLES.map((role) => {
+      const count = this.coverage.roles[role] || 0;
+      const missing = count === 0 && role !== 'AXGroup';
+      return '<div class="' + (missing ? 'is-missing' : '') + '">' +
+        '<span>' + escapeHTML(role) + '</span><strong>' + count + '</strong>' +
+      '</div>';
+    }).join('');
+    return '<section class="codex-review-section codex-review-coverage">' +
+      '<div class="codex-review-section-title">AX coverage</div>' +
+      '<div class="codex-review-coverage-summary">' +
+        '<div><span>Total</span><strong>' + this.coverage.total + '</strong></div>' +
+        '<div><span>Overlay</span><strong>' + this.coverage.overlay + '</strong></div>' +
+      '</div>' +
+      '<div class="codex-review-coverage-roles">' + rows + '</div>' +
+      '<div class="codex-review-empty">Missing images, cells, or views are not exposed by the iOS accessibility tree.</div>' +
+    '</section>';
+  };
+
+  CodexReviewMode.prototype._targetDetailsHTML = function (target) {
+    return '<div class="codex-review-details">' +
+      row('type', target.type) +
+      row('role', target.role) +
+      row('label', target.label) +
+      row('id', target.axId || target.targetId) +
+      row('frame', frameString(target.frame)) +
+      (target.treePath ? row('path', target.treePath) : '') +
+    '</div>';
+  };
+
+  CodexReviewMode.prototype._toggleDrawing = function () {
+    this.drawing = !this.drawing;
+    this.drawStart = null;
+    if (this.drawPreview) this.drawPreview.remove();
+    this.drawPreview = null;
+    if (this.overlay) this.overlay.classList.toggle('is-drawing', this.drawing);
+    this._renderPanel();
+  };
+
+  CodexReviewMode.prototype._wireManualDrawing = function (overlay) {
+    overlay.addEventListener('mousedown', (e) => {
+      if (!this.drawing) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.drawStart = this._eventPoint(e);
+      this.drawPreview = document.createElement('div');
+      this.drawPreview.className = 'codex-review-draw-preview';
+      this.drawPreview.style.cssText = 'position:absolute;box-sizing:border-box;z-index:3000;pointer-events:none;';
+      overlay.appendChild(this.drawPreview);
+      this._updateDrawPreview(this.drawStart, this.drawStart);
+    }, true);
+    overlay.addEventListener('mousemove', (e) => {
+      if (!this.drawing || !this.drawStart || !this.drawPreview) return;
+      e.preventDefault();
+      this._updateDrawPreview(this.drawStart, this._eventPoint(e));
+    }, true);
+    overlay.addEventListener('mouseup', (e) => {
+      if (!this.drawing || !this.drawStart) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const frame = normalizeFrame(this.drawStart, this._eventPoint(e));
+      if (this.drawPreview) this.drawPreview.remove();
+      this.drawPreview = null;
+      this.drawStart = null;
+      this.drawing = false;
+      overlay.classList.remove('is-drawing');
+      if (frame.width < 4 || frame.height < 4) {
+        this._renderPanel();
+        return;
+      }
+      const target = manualTarget(frame);
+      this.manualTargets.push(target);
+      const el = this._elementForManualTarget(target, this._screenSize());
+      overlay.appendChild(el);
+      this._selectTarget(target, el);
+    }, true);
+  };
+
+  CodexReviewMode.prototype._eventPoint = function (e) {
+    const r = this.overlay.getBoundingClientRect();
+    const screen = this._screenSize();
+    const x = clamp(((e.clientX - r.left) / r.width) * screen.w, 0, screen.w);
+    const y = clamp(((e.clientY - r.top) / r.height) * screen.h, 0, screen.h);
+    return { x, y };
+  };
+
+  CodexReviewMode.prototype._updateDrawPreview = function (a, b) {
+    if (!this.drawPreview) return;
+    const frame = normalizeFrame(a, b);
+    const screen = this._screenSize();
+    this.drawPreview.style.left = `${(frame.x / screen.w) * 100}%`;
+    this.drawPreview.style.top = `${(frame.y / screen.h) * 100}%`;
+    this.drawPreview.style.width = `${(frame.width / screen.w) * 100}%`;
+    this.drawPreview.style.height = `${(frame.height / screen.h) * 100}%`;
+  };
+
   CodexReviewMode.prototype._saveComment = function (note) {
     if (!this.selected) return;
     const trimmed = String(note || '').trim();
@@ -310,7 +460,7 @@
     } else {
       this.comments.push({
         id: makeCommentId(),
-        target: nodePayload(this.selected.entry.node, this.selected.axId, this.selected.entry.path),
+        target: this.selected.target,
         type: COMMENT_TYPE,
         note: trimmed,
         createdAt: now,
@@ -338,7 +488,7 @@
       return '<article class="codex-review-comment-group">' +
         '<button class="codex-review-target-link" data-act="select-comment" data-id="' +
           escapeHTML(group.comments[0].id) + '">' +
-          '<span>' + escapeHTML(target.label || target.role || target.axId || 'Target') + '</span>' +
+          '<span>' + escapeHTML(targetLabel(target)) + '</span>' +
           '<strong>' + group.comments.length + '</strong>' +
         '</button>' +
         group.comments.map((comment) => (
@@ -363,6 +513,7 @@
     }
     this.overlay.querySelectorAll('.codex-review-node').forEach((el) => {
       const key = targetKey({
+        targetId: el.dataset.targetId,
         axId: el.dataset.axId,
         treePath: el.dataset.treePath,
       });
@@ -377,14 +528,14 @@
     if (!this.selected) return null;
     return {
       snapshot: this._snapshotMeta(),
-      selectedNode: nodePayload(this.selected.entry.node, this.selected.axId, this.selected.entry.path),
+      selectedNode: this.selected.target,
       tool: { name: TOOL_NAME, version: TOOL_VERSION },
     };
   };
 
   CodexReviewMode.prototype._selectedAnnotationsPayload = function () {
     if (!this.selected) return null;
-    const key = selectedTargetKey(this.selected);
+    const key = targetKey(this.selected.target);
     return this._annotationsPayload(this.comments.filter((comment) => targetKey(comment.target) === key));
   };
 
@@ -487,13 +638,30 @@
   }
 
   function nodePayload(node, axId, path) {
+    const treePath = treePathString(path);
     return {
+      type: 'ax-node',
+      targetId: `${axId}|${treePath}`,
       axId,
       role: node.role || null,
       label: node.label || node.title || null,
       value: node.value || null,
       frame: node.frame || null,
-      treePath: treePathString(path),
+      treePath,
+    };
+  }
+
+  function manualTarget(frame) {
+    const id = `manual-rect-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    return {
+      type: 'manual-rect',
+      targetId: id,
+      axId: null,
+      role: 'ManualRectangle',
+      label: 'Manual rectangle',
+      value: null,
+      frame,
+      treePath: null,
     };
   }
 
@@ -518,15 +686,38 @@
     return Array.from(map.values());
   }
 
-  function selectedTargetKey(selected) {
-    return targetKey({
-      axId: selected.axId,
-      treePath: treePathString(selected.entry.path),
-    });
+  function coverageFor(all, visible) {
+    const roles = {};
+    for (const entry of all) {
+      const role = entry.node && entry.node.role || 'AXUnknown';
+      roles[role] = (roles[role] || 0) + 1;
+    }
+    return { total: all.length, overlay: visible.length, roles };
+  }
+
+  function baseTargetStyle(frame, screen, zIndex) {
+    return 'position:absolute;box-sizing:border-box;cursor:crosshair;pointer-events:auto;' +
+      `left:${(frame.x / screen.w) * 100}%;top:${(frame.y / screen.h) * 100}%;` +
+      `width:${(frame.width / screen.w) * 100}%;height:${(frame.height / screen.h) * 100}%;` +
+      `z-index:${zIndex};`;
   }
 
   function targetKey(target) {
-    return `${target.axId || ''}|${target.treePath || ''}`;
+    return target.targetId || `${target.axId || ''}|${target.treePath || ''}`;
+  }
+
+  function targetLabel(target) {
+    return target.label || target.role || target.axId || target.targetId || 'Target';
+  }
+
+  function ariaLabelForTarget(target) {
+    return [
+      'Review target',
+      target.type,
+      target.role,
+      target.label || target.axId || target.targetId,
+      frameString(target.frame),
+    ].filter(Boolean).join(', ');
   }
 
   function axIdFor(entry) {
@@ -540,6 +731,18 @@
   function makeCommentId() {
     const suffix = Math.random().toString(36).slice(2, 8);
     return `comment-${Date.now().toString(36)}-${suffix}`;
+  }
+
+  function normalizeFrame(a, b) {
+    const x1 = Math.min(a.x, b.x);
+    const y1 = Math.min(a.y, b.y);
+    const x2 = Math.max(a.x, b.x);
+    const y2 = Math.max(a.y, b.y);
+    return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+  }
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
   }
 
   function frameString(f) {

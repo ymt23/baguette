@@ -104,8 +104,10 @@ elements and captures review intent, while the target iOS project decides
 source mapping and implementation.
 
 The project-side agent should treat `annotations[]` as one review batch for a
-single snapshot. Each entry represents one selected AX target, and each target
-can contain multiple comments.
+single snapshot. Each entry represents one selected target, and each target can
+contain multiple comments. Targets can be accessibility-derived `ax-node`
+targets or user-drawn `manual-rect` targets for views, cells, images, or
+spacing that the iOS accessibility tree does not expose.
 
 ```json
 {
@@ -125,6 +127,8 @@ can contain multiple comments.
   "annotations": [
     {
       "target": {
+        "type": "ax-node",
+        "targetId": "motion.row.0.subtitle|0.4.2",
         "axId": "motion.row.0.subtitle",
         "role": "AXStaticText",
         "label": "Row description for scroll testing",
@@ -158,6 +162,38 @@ can contain multiple comments.
 }
 ```
 
+Manual rectangle targets are intentionally approximate and should be mapped by
+nearby visual context, frames, and project source inspection:
+
+```json
+{
+  "target": {
+    "type": "manual-rect",
+    "targetId": "manual-rect-mowxxxx",
+    "axId": null,
+    "role": "ManualRectangle",
+    "label": "Manual rectangle",
+    "value": null,
+    "frame": {
+      "x": 12,
+      "y": 150,
+      "width": 180,
+      "height": 120
+    },
+    "treePath": null
+  },
+  "comments": [
+    {
+      "id": "comment-abc123",
+      "type": "design-comment",
+      "note": "Adjust the thumbnail crop in this cell.",
+      "createdAt": "2026-05-08T17:00:30.000Z",
+      "updatedAt": "2026-05-08T17:00:30.000Z"
+    }
+  ]
+}
+```
+
 Future transports should treat this payload as the boundary object. MCP sending,
 CX Design Mode comments, file export, or issue-tracker registration can be
 added as transport choices after their receiving contracts are known.
@@ -165,6 +201,9 @@ added as transport choices after their receiving contracts are known.
 ## Risks
 
 - Accessibility nodes may not include decorative elements.
+- UIKit views, cells, and images may not be exposed as separate AX nodes unless
+  the target app supplies accessibility metadata.
+- Manual rectangles are review-region hints; they are not source mappings.
 - Frame data supports layout review, but not exact SwiftUI padding values.
 - Snapshot data becomes stale after scrolling or navigation.
 - Source mapping can point to a nearby file or symbol rather than the exact
