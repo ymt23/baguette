@@ -508,22 +508,34 @@
   #simNativeView .codex-review-inline-add {
     position: absolute;
     z-index: 3200;
-    width: 22px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
     padding: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1.5px solid #1d4ed8;
-    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.75);
+    border-radius: 999px;
     background: #2563eb;
     color: #fff;
-    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.24);
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.22), 0 0 0 1px rgba(37, 99, 235, 0.16);
     cursor: pointer;
-    font: 800 14px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    transition: background 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
   }
   #simNativeView .codex-review-inline-add:hover {
     background: #1d4ed8;
+    transform: translateY(-1px);
+    box-shadow: 0 3px 10px rgba(15, 23, 42, 0.26), 0 0 0 1px rgba(37, 99, 235, 0.18);
+  }
+  #simNativeView .codex-review-inline-add svg {
+    width: 15px;
+    height: 15px;
+    display: block;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
   #simNativeView .codex-review-inline-popover {
     position: absolute;

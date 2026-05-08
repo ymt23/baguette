@@ -572,7 +572,12 @@
     button.className = 'codex-review-inline-add';
     button.setAttribute('aria-label', 'Add comment to selected target');
     button.title = 'Add comment';
-    button.textContent = '+';
+    button.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+        '<path d="M5 5.5h14a2 2 0 0 1 2 2v7.2a2 2 0 0 1-2 2H11.8L7.2 20v-3.3H5a2 2 0 0 1-2-2V7.5a2 2 0 0 1 2-2Z"/>' +
+        '<path d="M12 8.5v5"/>' +
+        '<path d="M9.5 11h5"/>' +
+      '</svg>';
     button.style.left = `${(placement.button.x / screen.w) * 100}%`;
     button.style.top = `${(placement.button.y / screen.h) * 100}%`;
     button.addEventListener('click', (event) => {
@@ -887,15 +892,15 @@
   }
 
   function inlinePlacement(frame, screen) {
-    const buttonSize = 22;
-    const gap = 6;
+    const buttonSize = 24;
+    const gap = 7;
     const popoverWidth = Math.min(250, Math.max(190, screen.w - 24));
     const popoverHeight = 98;
     const preferRight = frame.x + frame.width + gap + popoverWidth <= screen.w - 8;
     const buttonX = preferRight
       ? frame.x + frame.width + gap
       : Math.max(8, frame.x - buttonSize - gap);
-    const buttonY = clamp(frame.y + Math.min(frame.height / 2, 18) - buttonSize / 2, 8, screen.h - buttonSize - 8);
+    const buttonY = clamp(frame.y + frame.height / 2 - buttonSize / 2, 8, screen.h - buttonSize - 8);
     const popoverX = preferRight
       ? frame.x + frame.width + gap
       : Math.max(8, frame.x - popoverWidth - gap);
