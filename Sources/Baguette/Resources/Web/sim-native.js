@@ -224,6 +224,7 @@
       root.removeAttribute('data-theme');
       localStorage.removeItem(THEME_KEY);
     }
+    if (window.BaguetteVersionBadge) window.BaguetteVersionBadge.refreshTheme();
   }
 
   // Open (or reopen) a StreamSession on the existing surface for a
