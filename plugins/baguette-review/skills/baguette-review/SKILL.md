@@ -11,11 +11,12 @@ Use this skill when a user asks to review an iOS app UI with Baguette CX Mode, o
 
 1. Ensure the target iOS app is running. In an iOS project, use XcodeBuildMCP or the project-local workflow; this plugin does not build or modify the app.
 2. Call `baguette_status`. If Baguette is not reachable, call `baguette_start`.
-3. Call `baguette_review_url` with `udid` or `deviceName`.
-4. Open the returned URL in the Codex in-app browser.
-5. Ask the human to enter CX Mode and add comments to AX targets or manual rectangles.
-6. Call `baguette_wait_for_review`.
-7. Call `baguette_get_latest_review` and hand the returned payload to the project-local `baguette-review-apply` skill when present.
+3. Choose the target simulator. If the user did not specify one, prefer a booted `iPhone 17 Pro`; otherwise use the first booted simulator from `baguette_status`.
+4. Call `baguette_review_url` with `udid` or `deviceName`.
+5. Open the returned URL in the Codex in-app browser. This is the expected Run-button path for this plugin.
+6. Ask the human to enter CX Mode and add comments to AX targets or manual rectangles.
+7. Call `baguette_wait_for_review`.
+8. Call `baguette_get_latest_review` and hand the returned payload to the project-local `baguette-review-apply` skill when present.
 
 ## Boundaries
 
