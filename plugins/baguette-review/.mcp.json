@@ -1,8 +1,9 @@
 {
   "mcpServers": {
-    "baguette-review": {
+    "baguette_review": {
       "command": "node",
       "args": ["./mcp/src/server.mjs"],
+      "cwd": ".",
       "env": {
         "BAGUETTE_REVIEW_BASE_URL": "http://127.0.0.1:8421"
       }

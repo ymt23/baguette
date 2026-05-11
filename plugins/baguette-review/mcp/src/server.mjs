@@ -13,6 +13,8 @@ const pluginRoot = resolve(__dirname, '../..');
 const templatePath = resolve(pluginRoot, 'templates/project-skill/SKILL.md');
 let launchedProcess = null;
 
+console.error(`[baguette-review-mcp] starting v${PLUGIN_VERSION}`);
+
 const tools = [
   {
     name: 'baguette_status',
@@ -343,24 +345,27 @@ function sleep(ms) {
 
 function send(message) {
   const json = JSON.stringify(message);
-  process.stdout.write(`Content-Length: ${Buffer.byteLength(json, 'utf8')}\r\n\r\n${json}`);
+  process.stdout.write(`${json}\n`);
 }
 
 async function handle(message) {
   if (message.method === 'initialize') {
+    console.error(`[baguette-review-mcp] initialize ${message.params?.protocolVersion || 'unknown'}`);
     send({
       jsonrpc: '2.0',
       id: message.id,
       result: {
         protocolVersion: message.params?.protocolVersion || '2024-11-05',
-        capabilities: { tools: {} },
+        capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'baguette-review', version: PLUGIN_VERSION },
+        instructions: 'Baguette Review MCP provides tools for opening CX Review Mode and retrieving saved review annotations.',
       },
     });
     return;
   }
   if (message.method === 'notifications/initialized') return;
   if (message.method === 'tools/list') {
+    console.error(`[baguette-review-mcp] tools/list ${tools.length}`);
     send({ jsonrpc: '2.0', id: message.id, result: { tools } });
     return;
   }
@@ -395,25 +400,53 @@ async function handle(message) {
 let input = Buffer.alloc(0);
 process.stdin.on('data', (chunk) => {
   input = Buffer.concat([input, chunk]);
-  while (true) {
-    const headerEnd = input.indexOf('\r\n\r\n');
-    if (headerEnd === -1) return;
-    const header = input.slice(0, headerEnd).toString('utf8');
-    const match = /content-length:\s*(\d+)/i.exec(header);
-    if (!match) {
-      input = input.slice(headerEnd + 4);
+  readMessages();
+});
+
+function readMessages() {
+  while (input.length > 0) {
+    if (/^content-length:/i.test(input.toString('utf8', 0, Math.min(input.length, 64)))) {
+      if (!readContentLengthMessage()) return;
       continue;
     }
-    const length = Number(match[1]);
-    const start = headerEnd + 4;
-    const end = start + length;
-    if (input.length < end) return;
-    const body = input.slice(start, end).toString('utf8');
-    input = input.slice(end);
-    try {
-      handle(JSON.parse(body));
-    } catch (error) {
-      send({ jsonrpc: '2.0', error: { code: -32700, message: error.message } });
-    }
+
+    const lineEnd = input.indexOf('\n');
+    if (lineEnd === -1) return;
+    const line = input.slice(0, lineEnd).toString('utf8').trim();
+    input = input.slice(lineEnd + 1);
+    if (line.length === 0) continue;
+    handleBody(line);
   }
-});
+}
+
+function readContentLengthMessage() {
+  const headerEnd = input.indexOf('\r\n\r\n');
+  if (headerEnd === -1) return false;
+
+  const header = input.slice(0, headerEnd).toString('utf8');
+  const match = /content-length:\s*(\d+)/i.exec(header);
+  if (!match) {
+    input = input.slice(headerEnd + 4);
+    return true;
+  }
+
+  const length = Number(match[1]);
+  const start = headerEnd + 4;
+  const end = start + length;
+  if (input.length < end) return false;
+
+  const body = input.slice(start, end).toString('utf8');
+  input = input.slice(end);
+  handleBody(body);
+  return true;
+}
+
+function handleBody(body) {
+  try {
+    Promise.resolve(handle(JSON.parse(body))).catch((error) => {
+      send({ jsonrpc: '2.0', error: { code: -32603, message: error.message } });
+    });
+  } catch (error) {
+    send({ jsonrpc: '2.0', error: { code: -32700, message: error.message } });
+  }
+}
