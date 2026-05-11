@@ -237,7 +237,7 @@ The project-local skill records its template version in frontmatter:
 ```md
 ---
 name: baguette-review-apply
-baguetteReviewTemplateVersion: 0.1.0
+baguetteReviewTemplateVersion: 0.1.1
 annotationPayloadVersion: 1
 ---
 ```
@@ -261,6 +261,24 @@ to the project-local skill only after human approval.
 Future transports should treat the annotation payload as the boundary object.
 CX Design Mode comments, file export, or issue-tracker registration can be
 added as transport choices after their receiving contracts are known.
+
+If `baguette_status` reports `incompatible: true`, a Baguette server is
+reachable but does not expose the CX Review API. The common case is an
+upstream/Homebrew binary already listening on the default port. In that state
+the simulator page may still load, but the CX Review icon, version badge, and
+`/review/status.json` endpoint are missing. Use `baguette_start` and the
+returned `baseUrl`; it will prefer the fork build and move to the next open
+port when the default port is occupied.
+
+For deterministic startup outside this repository, set either:
+
+```text
+BAGUETTE_BIN=/path/to/Baguette
+BAGUETTE_REVIEW_REPO=/path/to/baguette-cx-review
+```
+
+`BAGUETTE_BIN` wins when both are present. Without these values, the MCP tries
+common local fork build paths before falling back to `baguette` on `PATH`.
 
 ## Risks
 

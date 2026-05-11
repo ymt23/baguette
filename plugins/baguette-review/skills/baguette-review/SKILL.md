@@ -10,9 +10,9 @@ Use this skill when a user asks to review an iOS app UI with Baguette CX Mode, o
 ## Workflow
 
 1. Ensure the target iOS app is running. In an iOS project, use XcodeBuildMCP or the project-local workflow; this plugin does not build or modify the app.
-2. Call `baguette_status`. If Baguette is not reachable, call `baguette_start`.
+2. Call `baguette_status`. If Baguette is not reachable, or if it returns `incompatible: true`, call `baguette_start`.
 3. Choose the target simulator. If the user did not specify one, prefer a booted `iPhone 17 Pro`; otherwise use the first booted simulator from `baguette_status`.
-4. Call `baguette_review_url` with `udid` or `deviceName`.
+4. Call `baguette_review_url` with `udid` or `deviceName`. If `baguette_start` returned a non-default `baseUrl`, use that URL for review and polling calls.
 5. Open the returned URL in the Codex in-app browser. This is the expected Run-button path for this plugin.
 6. Ask the human to enter CX Mode and add comments to AX targets or manual rectangles.
 7. Call `baguette_wait_for_review`.
@@ -21,6 +21,7 @@ Use this skill when a user asks to review an iOS app UI with Baguette CX Mode, o
 ## Boundaries
 
 - Treat Baguette as the review surface and annotation transport.
+- If `/simulators/...` loads but the CX icon and version badge are missing, assume an upstream/Homebrew Baguette binary is running. Do not use that page for CX Review; start the fork build through `baguette_start`.
 - Do not decide project-specific source mapping in this skill.
 - Do not require clipboard JSON unless MCP retrieval fails; clipboard copy remains a fallback.
 - Do not overwrite project-local skills. Use `baguette_project_skill_status`, `baguette_project_skill_diff`, and `baguette_scaffold_project_skill`.

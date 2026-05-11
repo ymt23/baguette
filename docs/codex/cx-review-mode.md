@@ -240,6 +240,12 @@ The browser UI displays `Baguette <base> · CX <extension>` in the upper-right
 corner on simulator list and focus pages. The base version follows upstream
 Baguette, while `CX` follows the fork-local Review extension version.
 
+If the simulator page loads but the CX icon and version badge are missing, the
+running process is not the CX fork build. This can happen when a Homebrew or
+upstream `baguette` binary already owns the requested port. The Baguette Review
+MCP treats `/simulators` without `/review/status.json` as an incompatible
+server and starts the fork build on another port when `baguette_start` is used.
+
 ## Annotation Types
 
 - `design-comment`: visual feedback or human design intent.

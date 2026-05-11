@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const PLUGIN_VERSION = '0.1.0';
+const PLUGIN_VERSION = '0.1.1';
 const REVIEW_API_VERSION = '1';
 const PAYLOAD_VERSION = '1';
 const DEFAULT_BASE_URL = process.env.BAGUETTE_REVIEW_BASE_URL || 'http://127.0.0.1:8421';
@@ -12,6 +12,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const pluginRoot = resolve(__dirname, '../..');
 const templatePath = resolve(pluginRoot, 'templates/project-skill/SKILL.md');
 let launchedProcess = null;
+let activeBaseUrl = DEFAULT_BASE_URL;
 
 console.error(`[baguette-review-mcp] starting v${PLUGIN_VERSION}`);
 
@@ -28,6 +29,7 @@ const tools = [
       host: stringProp('Host to bind', '127.0.0.1'),
       port: numberProp('Port to bind', 8421),
       baguetteBin: stringProp('Baguette executable path or name', 'baguette'),
+      repoPath: stringProp('Baguette CX review fork repository path'),
     }),
   },
   {
@@ -133,9 +135,28 @@ async function baguetteStatus(args) {
   const baseUrl = normalizedBaseUrl(args.baseUrl);
   const status = await getJSON(`${baseUrl}/review/status.json`);
   if (!status.ok) {
+    const simulators = await request(`${baseUrl}/simulators`);
+    if (simulators.ok) {
+      return {
+        ok: false,
+        reachable: false,
+        serverReachable: true,
+        compatible: false,
+        incompatible: true,
+        baseUrl,
+        plugin: { version: PLUGIN_VERSION },
+        error: 'Baguette is reachable, but CX Review API is missing. The running binary is likely an upstream/Homebrew build without CX Review Mode.',
+        details: {
+          reviewStatusError: status.error,
+          simulatorsStatus: simulators.status,
+        },
+      };
+    }
     return {
       ok: false,
       reachable: false,
+      serverReachable: false,
+      compatible: false,
       baseUrl,
       plugin: { version: PLUGIN_VERSION },
       error: status.error,
@@ -144,6 +165,7 @@ async function baguetteStatus(args) {
   return {
     ok: true,
     reachable: true,
+    serverReachable: true,
     baseUrl,
     plugin: { version: PLUGIN_VERSION },
     compatible: String((status.data.cxReview || status.data.baguette)?.reviewApiVersion) === REVIEW_API_VERSION &&
@@ -154,12 +176,21 @@ async function baguetteStatus(args) {
 
 async function baguetteStart(args) {
   const host = args.host || '127.0.0.1';
-  const port = Number(args.port || 8421);
-  const baseUrl = `http://${host}:${port}`;
+  const requestedPort = Number(args.port || 8421);
+  let port = requestedPort;
+  let baseUrl = `http://${host}:${port}`;
   const existing = await baguetteStatus({ baseUrl });
-  if (existing.reachable) return { ...existing, reused: true };
+  if (existing.reachable && existing.compatible !== false) {
+    activeBaseUrl = baseUrl;
+    return { ...existing, reused: true };
+  }
+  if (existing.serverReachable && !existing.compatible) {
+    const nextPort = await nextReviewPort(host, requestedPort + 1);
+    port = nextPort;
+    baseUrl = `http://${host}:${port}`;
+  }
 
-  const bin = args.baguetteBin || process.env.BAGUETTE_BIN || 'baguette';
+  const bin = resolveBaguetteBin(args);
   launchedProcess = spawn(bin, ['serve', '--host', host, '--port', String(port)], {
     detached: true,
     stdio: 'ignore',
@@ -171,9 +202,19 @@ async function baguetteStart(args) {
   while (Date.now() < deadline) {
     await sleep(500);
     last = await baguetteStatus({ baseUrl });
-    if (last.reachable) return { ...last, started: true, pid: launchedProcess.pid };
+    if (last.reachable && last.compatible !== false) {
+      activeBaseUrl = baseUrl;
+      return { ...last, started: true, pid: launchedProcess.pid, baguetteBin: bin };
+    }
   }
-  return { ok: false, reachable: false, started: false, baseUrl, error: last?.error || 'Baguette did not become reachable' };
+  return {
+    ok: false,
+    reachable: false,
+    started: false,
+    baseUrl,
+    baguetteBin: bin,
+    error: last?.error || 'Baguette did not become reachable with a compatible CX Review API',
+  };
 }
 
 async function baguetteReviewUrl(args) {
@@ -303,7 +344,41 @@ async function request(url, init = {}) {
 }
 
 function normalizedBaseUrl(value) {
-  return String(value || DEFAULT_BASE_URL).replace(/\/+$/, '');
+  return String(value || activeBaseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
+}
+
+function resolveBaguetteBin(args = {}) {
+  if (args.baguetteBin) return args.baguetteBin;
+  if (process.env.BAGUETTE_BIN) return process.env.BAGUETTE_BIN;
+
+  for (const candidate of baguetteBinCandidates(args.repoPath)) {
+    if (existsSync(candidate)) return candidate;
+  }
+
+  return 'baguette';
+}
+
+function baguetteBinCandidates(repoPath) {
+  const roots = [
+    repoPath,
+    process.env.BAGUETTE_REVIEW_REPO,
+    process.env.HOME && `${process.env.HOME}/Documents/Personal/Tools/baguette-cx-review`,
+  ].filter(Boolean);
+
+  return roots.flatMap((root) => [
+    resolve(root, '.build/arm64-apple-macosx/debug/Baguette'),
+    resolve(root, '.build/debug/Baguette'),
+    resolve(root, '.build/arm64-apple-macosx/release/Baguette'),
+    resolve(root, '.build/release/Baguette'),
+  ]);
+}
+
+async function nextReviewPort(host, startPort) {
+  for (let port = startPort; port < startPort + 20; port++) {
+    const probe = await request(`http://${host}:${port}/simulators`);
+    if (!probe.ok && !probe.status) return port;
+  }
+  return startPort;
 }
 
 function projectSkillPath(projectPath) {
