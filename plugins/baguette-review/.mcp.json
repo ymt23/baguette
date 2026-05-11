@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "baguette-review": {
+    "baguette_review": {
       "command": "node",
       "args": ["./mcp/src/server.mjs"],
       "cwd": ".",
