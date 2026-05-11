@@ -26,7 +26,7 @@
       "Read",
       "Write"
     ],
-    "defaultPrompt": "Open Baguette CX Review Mode for the current iOS simulator and retrieve annotations",
+    "defaultPrompt": "Start or reuse Baguette, choose the booted iPhone 17 Pro or first booted simulator, open its Baguette CX Review URL in the Codex in-app browser, and wait for review annotations",
     "brandColor": "#0A84FF"
   }
 }
