@@ -26,6 +26,28 @@ server side; clients always send points.
 
 `duration` is the dwell time in seconds. Default ~0.05 if omitted.
 
+## Double-tap (4 lines, one connection)
+
+There is no `{"type":"double-tap"}` envelope. UIKit's
+`UITapGestureRecognizer(numberOfTapsRequired: 2)` and SwiftUI's
+`TapGesture(count: 2)` both fire when two `touch1-down`/`touch1-up`
+pairs arrive at the same coordinate within ~250 ms, so the existing
+streaming primitives already cover this:
+
+```json
+{"type":"touch1-down","x":219,"y":478,"width":438,"height":954}
+{"type":"touch1-up",  "x":219,"y":478,"width":438,"height":954}
+{"type":"touch1-down","x":219,"y":478,"width":438,"height":954}
+{"type":"touch1-up",  "x":219,"y":478,"width":438,"height":954}
+```
+
+Send all four on **one** connection (one `baguette input` process,
+one WS); separate processes spend too long in startup for the
+recognizer to aggregate. A known-good cadence is ~80 ms hold per
+tap and ~50 ms gap between taps. For a one-shot CLI shape with the
+same recipe baked in, use `baguette double-tap` — see
+[`docs/features/double-tap.md`](../../../docs/features/double-tap.md).
+
 ## Swipe (one-shot, server interpolates)
 
 ```json
@@ -245,6 +267,41 @@ socket runs until the simulator dies or the client closes. Levels:
 rejects `notice / error / fault` (host macOS supports them; the
 simulator's slimmer interface does not). For higher-severity-only
 filtering, use `predicate=messageType == "error"`.
+
+## Camera WebSocket — `WS /simulators/<UDID>/camera`
+
+Dedicated socket that drives the virtual-camera feature: baguette
+captures BGRA frames off a Mac webcam and pumps them into
+`/tmp/SimCam.bgra`, where `VirtualCamera.dylib` (loaded inside the
+simulator via `DYLD_INSERT_LIBRARIES`) picks them up and substitutes
+them for the iOS app's `AVCaptureVideoPreviewLayer` /
+`AVCapturePhotoOutput` / `UIImagePickerController` contents.
+
+Client → server text frames:
+
+```json
+{"type":"camera_list"}
+{"type":"camera_start","deviceUID":"0x14600000046d0825","fit":"fit","mirror":false}
+{"type":"camera_stop"}
+{"type":"camera_set_flags","fit":"fill","mirror":true}
+```
+
+Server → client text frames:
+
+```json
+{"type":"camera_devices","devices":[{"uid":"…","name":"FaceTime HD Camera","isDefault":true}]}
+{"type":"camera_state","ok":true,"phase":"streaming","fps":29.97,"device":"0x14600000046d0825"}
+{"type":"camera_state","ok":false,"phase":"idle","fps":0,"error":"…"}
+```
+
+`camera_devices` lands once on connect, again after every
+`camera_list`. `camera_state` lands after every start/stop/set_flags.
+`fit` is one of `"fit"` (letterbox) | `"fill"` (cover with
+center-crop). The browser exposes this as the "Camera" card under
+`/simulators/<UDID>`'s sidebar. iOS apps launched *before* arming
+won't see frames — relaunch them. See
+[`docs/features/camera.md`](../../../docs/features/camera.md) for
+the full pipeline.
 
 ## Debugging a "tap missed"
 

@@ -59,7 +59,8 @@ Same wire format as `baguette input`, one gesture per process. Use these
 in shell scripts where you don't need streaming throughput.
 
 ```bash
-baguette tap   --udid X --x 219 --y 478 --width 438 --height 954 [--duration 0.05]
+baguette tap        --udid X --x 219 --y 478 --width 438 --height 954 [--duration 0.05]
+baguette double-tap --udid X --x 219 --y 478 --width 438 --height 954 [--interval 0.05] [--duration 0.08]
 baguette swipe --udid X --startX 219 --startY 760 --endX 219 --endY 190 \
                        --width 438 --height 954 [--duration 0.3]
 baguette pinch --udid X --cx 219 --cy 478 --startSpread 60 --endSpread 240 \

@@ -237,7 +237,7 @@ The project-local skill records its template version in frontmatter:
 ```md
 ---
 name: baguette-review-apply
-baguetteReviewTemplateVersion: 0.1.1
+baguetteReviewTemplateVersion: 0.1.2
 annotationPayloadVersion: 1
 ---
 ```

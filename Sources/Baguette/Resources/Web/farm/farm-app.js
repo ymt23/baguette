@@ -27,7 +27,7 @@
   function FarmApp() {
     this.devices = [];
     this.tiles = new Map();              // udid → FarmTile
-    this.chromeLayouts = new Map();      // udid → layout|null (null = no chrome)
+    this.definitions = new Map();        // udid → SDK definition|null (null = no chrome)
     this.filter = new window.FarmFilter();
     this.view = 'grid';
     this.sort = { key: 'name', dir: 'asc' };
@@ -39,13 +39,13 @@
 
   FarmApp.prototype.boot = async function () {
     await this.refreshDevices();
-    // Bezels are on by default — pre-fetch chrome layouts before the
+    // Bezels are on by default — pre-fetch SDK definitions before the
     // first paint so tiles mount with their bezel chrome on the
-    // initial render rather than flashing raw → bezel as layouts
+    // initial render rather than flashing raw → bezel as definitions
     // arrive. Fetches run in parallel; failures are tolerated (Apple
-    // TV / watchOS have no chrome bundle and DeviceFrame falls back
-    // to a flat fill).
-    if (this.showBezels) await this.loadChromeLayouts();
+    // TV / watchOS have no chrome bundle and the bezel falls back
+    // to a flat fill via the SDK's frameImg.onerror handler).
+    if (this.showBezels) await this.loadDefinitions();
     this.renderAll();
     this.startVisibleTiles();
     this.bindGlobalKeys();
@@ -206,7 +206,7 @@
       if (!tile) return;
       tile.attach(host, {
         useBezel: this.showBezels,
-        layout:   this.chromeLayouts.get(udid) || null
+        def:      this.definitions.get(udid) || null
       });
     });
   };
@@ -216,29 +216,30 @@
     if (kind !== 'bezel') return;
     this.showBezels = enabled;
     if (enabled) {
-      await this.loadChromeLayouts();
+      await this.loadDefinitions();
     }
     this.renderAll();
   };
 
-  // Lazy chrome-layout fetch — only paid for once the user actually
-  // wants bezels. Hits `/simulators/<udid>/chrome.json` per device;
+  // Lazy SDK-definition fetch — only paid for once the user actually
+  // wants bezels. Hits `/simulators/<udid>/definition.json` per device;
   // a 404 means DeviceKit has no chrome bundle (Apple TV, watchOS),
-  // and DeviceFrame falls back to a flat fill in that case.
-  FarmApp.prototype.loadChromeLayouts = async function () {
+  // and the SDK bezel falls back to a flat fill in that case.
+  FarmApp.prototype.loadDefinitions = async function () {
     const need = this.devices.filter(d =>
-      d.uiState !== 'off' && !this.chromeLayouts.has(d.udid));
+      d.uiState !== 'off' && !this.definitions.has(d.udid));
     await Promise.allSettled(need.map(async d => {
       try {
-        const res = await fetch(`/simulators/${encodeURIComponent(d.udid)}/chrome.json`);
-        if (!res.ok) { this.chromeLayouts.set(d.udid, null); return; }
-        const layout = await res.json();
-        this.chromeLayouts.set(d.udid, layout);
+        const res = await fetch(`/simulators/${encodeURIComponent(d.udid)}/definition.json`);
+        if (!res.ok) { this.definitions.set(d.udid, null); return; }
+        const def = await res.json();
+        this.definitions.set(d.udid, def);
       } catch {
-        this.chromeLayouts.set(d.udid, null);
+        this.definitions.set(d.udid, null);
       }
     }));
   };
+
 
   // ---- selection / focus --------------------------------------------
   FarmApp.prototype.select = function (udid) {
@@ -267,11 +268,12 @@
       // container is whatever the tile's current input wiring built.
       getRecorderContext: () => {
         const focusScreen = this.focus && this.focus.previewScreen;
+        const def = this.definitions.get(udid) || null;
         return {
           canvas: tile?.canvas || null,
           frameImg: focusScreen ? focusScreen.querySelector('img') : null,
-          layout: this.chromeLayouts.get(udid) || null,
-          overlayHost: tile?.pinchOverlay ? tile.pinchOverlay.container : null,
+          screen: def && def.screen ? def.screen : null,
+          overlayHost: tile?.overlayContainer() || null,
         };
       },
     });
@@ -280,12 +282,11 @@
     // painting in place; we install a mirror <video> in the focus
     // preview so the user sees the same frames at full size.
     this.applySelectionHighlight();
-    const layout = this.chromeLayouts.get(udid) || null;
+    const def = this.definitions.get(udid) || null;
     if (tile && this.focus.previewScreen) {
-      tile.attachMirror(this.focus.previewScreen, { useBezel: this.showBezels, layout });
+      tile.attachMirror(this.focus.previewScreen, { useBezel: this.showBezels, def });
     }
-    // Bump stream quality + wire input on the mirror.
-    if (tile) tile.promote({ layout });
+    if (tile) tile.promote();
   };
 
   // Flip the .selected class on grid tiles + refresh the CLI footer

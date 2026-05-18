@@ -17,14 +17,11 @@
 
   // --- Live stream state ---
   let session = null;       // StreamSession
-  let frame = null;         // DeviceFrame
-  let surface = null;       // { screenArea, canvas, frameImg }
+  let sim = null;           // Baguette SDK Simulator (replaces DeviceFrame + SimInput + MouseGestureSource + BezelButtons)
   let gallery = null;       // CaptureGallery
-  let simInput = null;
-  let mouseSource = null;
-  let pinchOverlay = null;
   let logPanel = null;
   let axInspector = null;   // AXInspector — accessibility-tree overlay
+  let cameraPanel = null;   // CameraPanel — Mac webcam → /tmp/SimCam.bgra
 
   let activeUdid = null;
   let activeName = null;
@@ -33,17 +30,17 @@
 
   // Recording state. BrowserRecorder spins up a compose canvas only
   // while active; references are pulled from what's already on the
-  // page (frameImg from DeviceFrame, layout from chrome.json, pinch
-  // dots from PinchOverlay's DOM container). Idle cost: zero.
+  // page (frameImg from the SDK bezel, screen geometry from
+  // sim.screen.def, pinch dots from PinchOverlay's DOM container).
+  // Idle cost: zero.
   //   state.recorder      : BrowserRecorder instance during a recording
-  //   state.layout        : cached chrome layout (composite + screen rect)
   //   state.savedQuality  : pre-recording stream config; restored on stop
   //   state.active        : true between start() and stop()
   //   state.startedAt     : ms timestamp for the live timer
   //   state.timer         : interval handle that ticks the toolbar label
   //   state.entries       : finished recordings (download links)
   const recordingState = {
-    recorder: null, layout: null, savedQuality: null,
+    recorder: null, savedQuality: null,
     active: false, startedAt: 0, timer: null,
     entries: [],
   };
@@ -143,17 +140,16 @@
     view.style.display = '';
     document.getElementById('simStreamTitle').textContent = name;
 
-    // Don't `force-cache` — chrome.json's shape evolves (e.g. button
-    // margins were added; innerCornerRadius math has been corrected),
-    // and `force-cache` would pin the browser to whatever it pulled
-    // first, ignoring the server's current response. The default
-    // policy plus the server's no-cache header keeps clients in sync.
-    const layout = await fetch(
-      `/simulators/${encodeURIComponent(udid)}/chrome.json`
-    ).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-
-    frame = new window.DeviceFrame({ udid, layout });
-    surface = frame.mount(document.getElementById('simDeviceFrame'));
+    // Boot the SDK: the page hands it a `send` closure that defers
+    // to the StreamSession's WebSocket. Pre-open gestures (rare —
+    // the user can't interact until the page renders) get dropped.
+    sim = await window.Baguette.use({
+      host: location.origin,
+      udid,
+      send: (payload) => { if (session) session.send(payload); },
+      log,
+    });
+    sim.mount(document.getElementById('simDeviceFrame'));
 
     const format = pickFormat();
     requestAnimationFrame(() => {
@@ -174,7 +170,7 @@
 
     session = new window.StreamSession({
       udid, format, version: 'v2',
-      canvas: surface.canvas,
+      canvas: sim.canvas,
       onSize: (w, h) => { lastPaintedSize = { w, h }; },
       onFps:  (fps) => {
         const el = document.getElementById('simStreamFps');
@@ -185,16 +181,8 @@
     });
     session.start();
 
-    wireInput(udid, frame.screenSize());
-    wireKeyboard();
-
-    // Cache the chrome layout for the recorder. The bezel <img> and
-    // pinch overlay are already in the page; the recorder pulls them
-    // by reference at start-time, so nothing extra runs while idle.
-    recordingState.layout = layout;
-
     gallery = new window.CaptureGallery({
-      udid, layout, frameImg: surface.frameImg,
+      udid, screen: sim.screen.def, frameImg: sim._bezel.frameImg,
     });
     gallery.clear();
     renderGallery();
@@ -217,10 +205,25 @@
       axHost.innerHTML = '';
       axInspector = new window.AXInspector({
         host: axHost,
-        screenArea: surface.screenArea,
+        screenArea: sim.screenArea,
         send: (payload) => session && session.send(payload),
-        getDeviceSize: () => frame.screenSize(),
+        // AX inspector still uses the legacy `{w, h}` shape; the SDK
+        // Screen exposes `{width, height}`. Adapt at the boundary
+        // until the inspector itself moves to the SDK shape.
+        getDeviceSize: () => ({ w: sim.screen.size.width, h: sim.screen.size.height }),
       });
+    }
+
+    // Camera control card — opens its own WS to
+    // /simulators/<udid>/camera and pumps Mac webcam frames into the
+    // shared-memory buffer the VirtualCamera dylib reads. Independent
+    // of the stream socket and the logs socket — closing the page
+    // tears all three down.
+    const cameraHost = document.getElementById('simCameraPanel');
+    if (cameraHost && window.CameraPanel) {
+      cameraHost.innerHTML = '';
+      cameraPanel = new window.CameraPanel();
+      cameraPanel.attach(cameraHost, udid);
     }
   }
 
@@ -229,13 +232,10 @@
       try { recordingState.recorder.cancel(); } catch { /* ignore */ }
     }
     if (axInspector) { axInspector.detach(); axInspector = null; }
+    if (cameraPanel) { cameraPanel.detach(); cameraPanel = null; }
     if (session) { session.stop(); session = null; }
-    if (mouseSource) { mouseSource.detach(); mouseSource = null; }
-    if (pinchOverlay) { pinchOverlay.clear(); pinchOverlay = null; }
+    if (sim) { sim.detach(); sim = null; }
     if (logPanel) { logPanel.detach(); logPanel = null; }
-    simInput = null;
-    frame = null;
-    surface = null;
     gallery = null;
     activeUdid = null;
     activeName = null;
@@ -246,51 +246,6 @@
     const list = document.getElementById('simListView');
     if (list) list.style.display = '';
     if (window.loadSimDeviceList) window.loadSimDeviceList();
-  }
-
-  function wireInput(udid, screenSize) {
-    simInput = new SimInput({
-      udid,
-      log,
-      // Input + control rides over the same WebSocket the stream
-      // session opened. SimInputBridge translates SimInput's asc-cli
-      // dialect (kind:"tap", fingers[]) to Baguette's GestureRegistry
-      // dialect (type:"tap", touch1-/touch2-, points-not-normalized);
-      // also shared by farm-tile.js and sim-native.js.
-      transport: window.SimInputBridge.makeTransport(session, log),
-    });
-    simInput.setScreenSize(screenSize.w, screenSize.h);
-    pinchOverlay = new PinchOverlay(surface.screenArea);
-    mouseSource = new MouseGestureSource({
-      el: surface.screenArea,
-      input: simInput,
-      overlay: pinchOverlay,
-      log,
-    });
-    mouseSource.attach();
-  }
-
-  function wireKeyboard() {
-    const KEY_HID = {
-      Backspace: 42, Enter: 40, Tab: 43, Escape: 41,
-      ArrowUp: 82, ArrowDown: 81, ArrowLeft: 80, ArrowRight: 79,
-    };
-    const el = surface.screenArea;
-    el.addEventListener('mousedown', () => el.focus());
-    el.addEventListener('keydown', (e) => {
-      if (e.metaKey || e.ctrlKey) return;
-      const hid = KEY_HID[e.key];
-      if (hid !== undefined) {
-        e.preventDefault();
-        log(`key(${e.key})`);
-        simInput.key(hid);
-        return;
-      }
-      if (e.key.length === 1 && !e.altKey) {
-        e.preventDefault();
-        simInput.type(e.key);
-      }
-    });
   }
 
   function renderGallery() {
@@ -304,14 +259,27 @@
   // --- Sidebar callbacks (invoked from sim-stream.html onclick=…) ---
 
   window._simStopStream = stopStream;
-  window._simButton = (b) => { if (!simInput) return; log(`button(${b})`); simInput.button(b); };
-  window._simKey    = (k) => { if (!simInput) return; log(`key(${k})`); simInput.key(k); };
+  window._simButton = (b) => {
+    if (!sim) return;
+    log(`button(${b})`);
+    sim.pressButton(b);
+  };
+  window._simKey = (k) => {
+    if (!sim || !sim.keyboard) return;
+    // Legacy sidebar fires raw HID numbers — the modern wire dialect
+    // accepts W3C codes (`"Enter"`, `"Backspace"`, …) which the
+    // backend resolves to HID. Numbers stay forwarded for back-compat
+    // with the existing sidebar HTML; new sidebar code should call
+    // `sim.keyboard.key('Enter')` directly.
+    log(`key(${k})`);
+    sim.keyboard.key(k);
+  };
   window._simSendText = () => {
     const el = document.getElementById('simTextInput');
     const t = el ? el.value : '';
-    if (!t || !simInput) return;
+    if (!t || !sim) return;
     log(`type("${t.slice(0, 20)}")`);
-    simInput.type(t);
+    sim.type(t);
     el.value = '';
   };
   window._simToggleFrame = (checked) => { captureWithFrame = checked; };
@@ -365,7 +333,7 @@
   // and feed it to MediaRecorder. No server round-trip, no offscreen
   // canvases — whatever's in the live canvas is what gets recorded.
   window._simToggleRecord = async () => {
-    if (!surface) return;
+    if (!sim) return;
 
     if (recordingState.active) {
       const rec = recordingState.recorder;
@@ -408,11 +376,14 @@
       recordingState.savedQuality = readActiveQuality();
       applyQuality({ scale: 1, fps: 60, bps: 8_000_000 });
 
+      // The "with frame" toggle drives both screenshots AND
+      // recordings — passing `screen: null` to the recorder makes it
+      // fall through to bare-screen mode (no bezel composite).
       const rec = new window.BrowserRecorder({
-        canvas:      surface.canvas,
-        frameImg:    surface.frameImg,
-        layout:      recordingState.layout,
-        overlayHost: pinchOverlay ? pinchOverlay.container : null,
+        canvas:      sim.canvas,
+        frameImg:    captureWithFrame ? sim._bezel.frameImg     : null,
+        screen:      captureWithFrame ? sim.screen.def          : null,
+        overlayHost: sim.pinchOverlayContainer,
         fps: 60,
       });
       rec.start();
@@ -454,7 +425,6 @@
   function resetRecordingUI() {
     recordingState.active = false;
     recordingState.recorder = null;
-    recordingState.layout = null;
     recordingState.savedQuality = null;
     recordingState.startedAt = 0;
     if (recordingState.timer) { clearInterval(recordingState.timer); recordingState.timer = null; }

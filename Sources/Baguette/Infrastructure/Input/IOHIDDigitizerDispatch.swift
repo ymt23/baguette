@@ -3,9 +3,7 @@ import Foundation
 /// Production digitizer-event dispatch — the path we cracked while
 /// debugging the iOS 26.4 / Xcode 26 mouse-event regression.
 ///
-/// `IndigoHIDMessageForMouseNSEvent`'s 7-arg signature is the path
-/// every other open-source bridge (`serve-sim`, `kittyfarm`,
-/// `opensafari`) targets, but on Xcode 26 it produces messages iOS
+/// Xcode 26 it produces messages iOS
 /// either ignores or interprets as the Home gesture. The fix is to
 /// build a real `IOHIDEvent` digitizer parent + finger child, run
 /// it through `IndigoHIDMessageForTrackpadEventFromHIDEventRef`

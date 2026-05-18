@@ -1,4 +1,5 @@
 import Foundation
+import HTTPTypes
 import Hummingbird
 import HummingbirdWebSocket
 import NIOCore
@@ -79,12 +80,31 @@ struct Server: Sendable {
     // MARK: - routes
 
     private func registerRoutes(on router: Router<BasicWebSocketRequestContext>) {
+        let bindHost = self.host
+        let bindPort = self.port
+        let rejectUntrustedBrowser: @Sendable (Request) -> Response? = { request in
+            Self.rejectUntrustedBrowserRequest(
+                request, bindHost: bindHost, bindPort: bindPort
+            )
+        }
+        let trustedWebSocketUpgrade:
+            @Sendable (Request, BasicWebSocketRequestContext) async throws -> RouterShouldUpgrade = {
+                request, _ in
+                Self.isTrustedBrowserRequest(
+                    request, bindHost: bindHost, bindPort: bindPort
+                ) ? .upgrade([:]) : .dontUpgrade
+            }
+
         // List page (HTML + sibling assets).
         router.get("/") { _, _ in Self.redirect(to: "/simulators") }
         router.get("/simulators") { _, _ in Self.staticAsset("sim.html") }
-        router.get("/simulators.json") { [simulators] _, _ in Self.listJSON(simulators) }
-        router.get("/review/status.json") { [simulators, reviewAnnotations] _, _ in
-            await Self.reviewStatusJSON(simulators: simulators, store: reviewAnnotations)
+        router.get("/simulators.json") { [simulators] r, _ in
+            if let rejected = rejectUntrustedBrowser(r) { return rejected }
+            return Self.listJSON(simulators)
+        }
+        router.get("/review/status.json") { [simulators, reviewAnnotations] r, _ in
+            if let rejected = rejectUntrustedBrowser(r) { return rejected }
+            return await Self.reviewStatusJSON(simulators: simulators, store: reviewAnnotations)
         }
 
         // Stream page — same sim.html, JS routes the inner view based on URL.
@@ -92,16 +112,19 @@ struct Server: Sendable {
 
         // Simulator actions.
         router.post("/simulators/:udid/boot")     { [simulators] r, _ in
-            Self.lifecycle(udid: Self.udidParam(r), simulators: simulators) { try $0.boot() }
+            if let rejected = rejectUntrustedBrowser(r) { return rejected }
+            return Self.lifecycle(udid: Self.udidParam(r), simulators: simulators) { try $0.boot() }
         }
         router.post("/simulators/:udid/shutdown") { [simulators] r, _ in
-            Self.lifecycle(udid: Self.udidParam(r), simulators: simulators) { try $0.shutdown() }
+            if let rejected = rejectUntrustedBrowser(r) { return rejected }
+            return Self.lifecycle(udid: Self.udidParam(r), simulators: simulators) { try $0.shutdown() }
         }
         // Orientation — `?value=portrait|landscape-left|landscape-right|portrait-upside-down`.
         // Routes through `simulator.orientation().set(...)` which fires
         // a GSEvent over `PurpleWorkspacePort`. Pure parse + dispatch
         // logic lives in `Server.applyOrientation` for unit testing.
         router.post("/simulators/:udid/orientation") { [simulators] r, _ in
+            if let rejected = rejectUntrustedBrowser(r) { return rejected }
             let value = r.uri.queryParameters.get("value") ?? ""
             switch Self.applyOrientation(
                 udid: Self.udidParam(r), value: value, simulators: simulators
@@ -125,9 +148,19 @@ struct Server: Sendable {
 
         // Chrome / bezel — DeviceKit-sourced layout + rasterized PNG.
         router.get("/simulators/:udid/chrome.json") { [simulators, chromes] r, _ in
-            Self.chromeJSON(udid: Self.udidParam(r), simulators: simulators, chromes: chromes)
+            if let rejected = rejectUntrustedBrowser(r) { return rejected }
+            return Self.chromeJSON(udid: Self.udidParam(r), simulators: simulators, chromes: chromes)
+        }
+        // SDK bootstrap — the single endpoint `Baguette.use(udid)` hits
+        // to instantiate the JS-side `Simulator` facade. Strict superset
+        // of `chrome.json` (which stays for migration); once every
+        // page consumes the SDK this route becomes the only chrome read.
+        router.get("/simulators/:udid/definition.json") { [simulators, chromes] r, _ in
+            if let rejected = rejectUntrustedBrowser(r) { return rejected }
+            return Self.definitionJSON(udid: Self.udidParam(r), simulators: simulators, chromes: chromes)
         }
         router.get("/simulators/:udid/bezel.png") { [simulators, chromes] r, _ in
+            if let rejected = rejectUntrustedBrowser(r) { return rejected }
             // ?buttons=false → bare device body (no buttons baked in).
             // The actionable-bezel front end layers per-button images on
             // top via the /chrome-button/<name>.png route below.
@@ -153,6 +186,7 @@ struct Server: Sendable {
         // a 3-segment path and grabs the second-to-last component,
         // which breaks for this 4-segment template.
         router.get("/simulators/:udid/chrome-button/:file") { [simulators, chromes] r, _ in
+            if let rejected = rejectUntrustedBrowser(r) { return rejected }
             let parts = r.uri.path.split(separator: "/")
             let udid = parts.count >= 4
                 ? String(parts[1]).removingPercentEncoding ?? ""
@@ -171,7 +205,8 @@ struct Server: Sendable {
         // awaits one IOSurface, encodes, and tears down — `?quality=`
         // and `?scale=` mirror the WS stream knobs for parity.
         router.get("/simulators/:udid/screenshot.jpg") { [simulators] r, _ in
-            await Self.screenshotJPEG(
+            if let rejected = rejectUntrustedBrowser(r) { return rejected }
+            return await Self.screenshotJPEG(
                 udid: Self.udidParam(r),
                 quality: r.uri.queryParameters.get("quality").flatMap(Double.init) ?? 0.85,
                 scale: r.uri.queryParameters.get("scale").flatMap(Int.init) ?? 1,
@@ -179,7 +214,8 @@ struct Server: Sendable {
             )
         }
         router.get("/simulators/:udid/review-snapshot.json") { [simulators] r, _ in
-            await Self.reviewSnapshotJSON(
+            if let rejected = rejectUntrustedBrowser(r) { return rejected }
+            return await Self.reviewSnapshotJSON(
                 udid: Self.udidParam(r),
                 quality: r.uri.queryParameters.get("quality").flatMap(Double.init) ?? 0.85,
                 scale: r.uri.queryParameters.get("scale").flatMap(Int.init) ?? 1,
@@ -187,7 +223,8 @@ struct Server: Sendable {
             )
         }
         router.put("/simulators/:udid/review-annotations.json") { [simulators, reviewAnnotations] r, _ in
-            await Self.putReviewAnnotations(
+            if let rejected = rejectUntrustedBrowser(r) { return rejected }
+            return await Self.putReviewAnnotations(
                 udid: Self.udidParam(r),
                 request: r,
                 simulators: simulators,
@@ -195,14 +232,16 @@ struct Server: Sendable {
             )
         }
         router.get("/simulators/:udid/review-annotations.json") { [simulators, reviewAnnotations] r, _ in
-            await Self.getReviewAnnotations(
+            if let rejected = rejectUntrustedBrowser(r) { return rejected }
+            return await Self.getReviewAnnotations(
                 udid: Self.udidParam(r),
                 simulators: simulators,
                 store: reviewAnnotations
             )
         }
         router.delete("/simulators/:udid/review-annotations.json") { [simulators, reviewAnnotations] r, _ in
-            await Self.deleteReviewAnnotations(
+            if let rejected = rejectUntrustedBrowser(r) { return rejected }
+            return await Self.deleteReviewAnnotations(
                 udid: Self.udidParam(r),
                 simulators: simulators,
                 store: reviewAnnotations
@@ -221,13 +260,39 @@ struct Server: Sendable {
             return Self.staticAsset("farm/\(name)")
         }
 
+        // Baguette SDK — served from `Resources/Web/baguette/`. The
+        // SDK's two-level layout (`parts/`, `gestures/`) needs literal
+        // subdirectory routes; Hummingbird's router rejects two
+        // placeholder routes that share a path slot with different
+        // param names (`/baguette/:file` vs `/baguette/:dir/:file`
+        // both bind position 2 but disagree on the name), so we
+        // register one route per known subdirectory instead.
+        router.get("/baguette/:file") { r, _ in
+            let name = String(r.uri.path.split(separator: "/").last ?? "")
+                .removingPercentEncoding ?? ""
+            return Self.staticAsset("baguette/\(name)")
+        }
+        router.get("/baguette/parts/:file") { r, _ in
+            let name = String(r.uri.path.split(separator: "/").last ?? "")
+                .removingPercentEncoding ?? ""
+            return Self.staticAsset("baguette/parts/\(name)")
+        }
+        router.get("/baguette/gestures/:file") { r, _ in
+            let name = String(r.uri.path.split(separator: "/").last ?? "")
+                .removingPercentEncoding ?? ""
+            return Self.staticAsset("baguette/gestures/\(name)")
+        }
+
         // Live stream — encoded frames downstream as binary; upstream
         // text JSON carries everything else: gesture input + runtime
         // control (set_bitrate / set_fps / set_scale / force_idr /
         // snapshot). One bidirectional channel per session means no
         // POST /event side-route, no UDID-keyed registry — the WS
         // closure already owns the live stream + sim handles.
-        router.ws("/simulators/:udid/stream") { [simulators] inbound, outbound, context in
+        router.ws(
+            "/simulators/:udid/stream",
+            shouldUpgrade: trustedWebSocketUpgrade
+        ) { [simulators] inbound, outbound, context in
             await Self.streamWS(
                 udid: Self.udidParam(context.request),
                 format: context.request.uri.queryParameters.get("format")
@@ -245,6 +310,14 @@ struct Server: Sendable {
         // the client tears down the spawned `log` child.
         registerLogsRoute(on: router)
 
+        // Virtual-camera control + frame production. The browser
+        // owns the device picker; baguette enumerates Mac cameras,
+        // pumps BGRA frames into the shared-memory ring buffer that
+        // VirtualCamera.dylib reads inside the simulator. One WS per
+        // sim; closing the socket stops capture but leaves the dylib
+        // armed on the sim's launchd domain.
+        registerCameraRoute(on: router)
+
         // Static UI siblings — JS / HTML / CSS files in Resources/Web/
         // accessed by name. Path component is the bare filename.
         router.get("/:file") { r, _ in
@@ -256,11 +329,14 @@ struct Server: Sendable {
 
     // MARK: - handlers
 
-    private static func staticAsset(_ name: String) -> Response {
+    static func staticAsset(_ name: String) -> Response {
         guard let data = WebRoot.data(named: name) else {
             return Response(
                 status: .notFound,
-                headers: [.contentType: "text/plain; charset=utf-8"],
+                headers: [
+                    .contentType: "text/plain; charset=utf-8",
+                    .contentSecurityPolicy: "frame-ancestors 'none'",
+                ],
                 body: .init(byteBuffer: ByteBuffer(string:
                     "missing \(name) — set BAGUETTE_WEB_DIR or rebuild"
                 ))
@@ -268,7 +344,11 @@ struct Server: Sendable {
         }
         return Response(
             status: .ok,
-            headers: [.contentType: contentType(for: name), .cacheControl: "no-cache"],
+            headers: [
+                .contentType: contentType(for: name),
+                .cacheControl: "no-cache",
+                .contentSecurityPolicy: "frame-ancestors 'none'",
+            ],
             body: .init(byteBuffer: ByteBuffer(data: data))
         )
     }
@@ -344,6 +424,23 @@ struct Server: Sendable {
         )
     }
 
+    private static func definitionJSON(
+        udid: String,
+        simulators: any Simulators,
+        chromes: any Chromes
+    ) -> Response {
+        guard let json = definitionJSONString(
+            udid: udid, simulators: simulators, chromes: chromes
+        ) else {
+            return errorJSON("no definition for udid \(udid)", status: .notFound)
+        }
+        return Response(
+            status: .ok,
+            headers: [.contentType: "application/json", .cacheControl: "no-cache"],
+            body: .init(byteBuffer: ByteBuffer(string: json))
+        )
+    }
+
     /// Pure data producer for `chrome.json`. Internal so handler-level
     /// tests can drive it with mock `Simulators` + `Chromes` and assert
     /// on the JSON string directly. The route closure (`chromeJSON`)
@@ -364,6 +461,27 @@ struct Server: Sendable {
         return assets.layoutJSON(
             buttonImageURLPrefix: "/simulators/\(udid)/chrome-button/"
         )
+    }
+
+    /// Pure data producer for the SDK bootstrap endpoint
+    /// `/simulators/<udid>/definition.json`. Composes a
+    /// `SimulatorDefinition` and serialises it. The route closure
+    /// (`definitionJSON`) wraps the result into a 200/404 response.
+    static func definitionJSONString(
+        udid: String,
+        simulators: any Simulators,
+        chromes: any Chromes
+    ) -> String? {
+        guard !udid.isEmpty, let sim = simulators.find(udid: udid),
+              let assets = sim.chrome(in: chromes) else {
+            return nil
+        }
+        let def = SimulatorDefinition.compose(
+            from: sim,
+            chrome: assets,
+            urlPrefix: "/simulators/\(udid)"
+        )
+        return def.toJSON()
     }
 
     private static func screenshotJPEG(
@@ -694,7 +812,7 @@ struct Server: Sendable {
             try stream.start(on: screen)
         } catch {
             try? await outbound.write(.text(
-                #"{"ok":false,"error":"\#(String(describing: error))"}"#
+                #"{"ok":false,"error":"\#(jsonEscape(String(describing: error)))"}"#
             ))
             return
         }
@@ -751,7 +869,7 @@ struct Server: Sendable {
             }
         } catch {
             try? await outbound.write(.text(
-                #"{"type":"describe_ui_result","ok":false,"error":"\#(String(describing: error))"}"#
+                #"{"type":"describe_ui_result","ok":false,"error":"\#(jsonEscape(String(describing: error)))"}"#
             ))
             return true
         }
@@ -773,7 +891,19 @@ struct Server: Sendable {
     /// `router.get` closures share a single function body.
     private func registerLogsRoute(on router: Router<BasicWebSocketRequestContext>) {
         let simulators = self.simulators
-        router.ws("/simulators/:udid/logs") { inbound, outbound, context in
+        let bindHost = self.host
+        let bindPort = self.port
+        let trustedWebSocketUpgrade:
+            @Sendable (Request, BasicWebSocketRequestContext) async throws -> RouterShouldUpgrade = {
+                request, _ in
+                Self.isTrustedBrowserRequest(
+                    request, bindHost: bindHost, bindPort: bindPort
+                ) ? .upgrade([:]) : .dontUpgrade
+            }
+        router.ws(
+            "/simulators/:udid/logs",
+            shouldUpgrade: trustedWebSocketUpgrade
+        ) { inbound, outbound, context in
             let req = context.request
             let opts = LogsRouteOptions.from(request: req)
             await Self.logsWS(
@@ -922,6 +1052,201 @@ struct Server: Sendable {
         try? await outbound.write(.text(#"{"type":"log_stopped","reason":"client closed"}"#))
     }
 
+    /// Register the `/simulators/:udid/camera` WebSocket route — the
+    /// browser's camera picker drives this. One WS per simulator; the
+    /// session is set up lazily on the first `camera_start`. Closing
+    /// the socket tears down capture but leaves the dylib's launchd
+    /// env in place, so a freshly-launched iOS app still loads the
+    /// VirtualCamera dylib without re-arming.
+    private func registerCameraRoute(on router: Router<BasicWebSocketRequestContext>) {
+        let simulators = self.simulators
+        let bindHost = self.host
+        let bindPort = self.port
+        let trustedWebSocketUpgrade:
+            @Sendable (Request, BasicWebSocketRequestContext) async throws -> RouterShouldUpgrade = {
+                request, _ in
+                Self.isTrustedBrowserRequest(
+                    request, bindHost: bindHost, bindPort: bindPort
+                ) ? .upgrade([:]) : .dontUpgrade
+            }
+        router.ws(
+            "/simulators/:udid/camera",
+            shouldUpgrade: trustedWebSocketUpgrade
+        ) { inbound, outbound, context in
+            await Self.cameraWS(
+                udid: Self.udidParam(context.request),
+                simulators: simulators,
+                inbound: inbound,
+                outbound: outbound
+            )
+        }
+    }
+
+    /// One WS lifecycle. On connect: push the device list. Then read
+    /// JSON messages forever, dispatching to the per-WS
+    /// `CameraSession`. The session writes BGRA frames into
+    /// `/tmp/SimCam.bgra` (the path the VirtualCamera dylib reads);
+    /// `VirtualCameraInstaller` resolves the bundled dylib's
+    /// per-hash dest path, and `SimctlSimulatorInjection` arms the
+    /// simulator's launchd env to point at it.
+    @MainActor
+    private static func cameraWS(
+        udid: String,
+        simulators: any Simulators,
+        inbound: WebSocketInboundStream,
+        outbound: WebSocketOutboundWriter
+    ) async {
+        guard !udid.isEmpty, let sim = simulators.find(udid: udid) else {
+            try? await outbound.write(.text(
+                #"{"type":"camera_state","ok":false,"error":"unknown udid"}"#
+            ))
+            return
+        }
+        let cameras = AVCameras()
+        let sink: any CameraFrameSink
+        do {
+            sink = try SharedMemoryFrameSink(path: "/tmp/SimCam.bgra")
+        } catch {
+            try? await outbound.write(.text(
+                #"{"type":"camera_state","ok":false,"error":"\#(jsonEscape(String(describing: error)))"}"#
+            ))
+            return
+        }
+        let session = CameraSession(
+            capture: AVCameraCapture(),
+            sink: sink,
+            injection: SimctlSimulatorInjection()
+        )
+
+        // Push the initial device list so the picker can render
+        // immediately without an extra round-trip.
+        await sendDeviceList(cameras: cameras, outbound: outbound)
+
+        defer { Task { await session.stop() } }
+
+        // 1-Hz heartbeat: sample FPS off the frame counter and push
+        // `camera_state` so the browser's "streaming · X fps" readout
+        // updates while frames flow. Detached child task — cancelled
+        // when the WS loop exits.
+        let heartbeat = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                if Task.isCancelled { break }
+                session.sampleFPS()
+                if case .streaming = session.phase {
+                    await sendCameraState(session: session, outbound: outbound)
+                }
+            }
+        }
+        defer { heartbeat.cancel() }
+
+        do {
+            for try await frame in inbound {
+                guard frame.opcode == .text else { continue }
+                let line = String(buffer: frame.data)
+                await handleCameraLine(
+                    line: line,
+                    cameras: cameras,
+                    session: session,
+                    sim: sim,
+                    outbound: outbound
+                )
+            }
+        } catch {
+            // socket closed; defer cleans up
+        }
+    }
+
+    @MainActor
+    private static func handleCameraLine(
+        line: String,
+        cameras: any Cameras,
+        session: CameraSession,
+        sim: any Simulator,
+        outbound: WebSocketOutboundWriter
+    ) async {
+        guard let data = line.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
+        let msg: CameraMessage
+        do { msg = try CameraMessage.parse(dict) } catch {
+            try? await outbound.write(.text(
+                #"{"type":"camera_state","ok":false,"error":"\#(jsonEscape(String(describing: error)))"}"#
+            ))
+            return
+        }
+
+        switch msg {
+        case .list:
+            await sendDeviceList(cameras: cameras, outbound: outbound)
+        case .start(let uid, let flags):
+            session.setFlags(flags)
+            let devices = await cameras.available()
+            guard let device = devices.first(where: { $0.uid == uid }) else {
+                try? await outbound.write(.text(
+                    #"{"type":"camera_state","ok":false,"error":"unknown camera deviceUID"}"#
+                ))
+                return
+            }
+            guard let dylibPath = VirtualCameraInstaller.installIfNeeded() else {
+                try? await outbound.write(.text(
+                    #"{"type":"camera_state","ok":false,"error":"VirtualCamera.dylib is not bundled in this build"}"#
+                ))
+                return
+            }
+            await session.start(device: device, on: sim, dylibPath: dylibPath)
+            await sendCameraState(session: session, outbound: outbound)
+        case .stop:
+            await session.stop()
+            await sendCameraState(session: session, outbound: outbound)
+        case .setFlags(let flags):
+            session.setFlags(flags)
+            await sendCameraState(session: session, outbound: outbound)
+        }
+    }
+
+    @MainActor
+    private static func sendDeviceList(
+        cameras: any Cameras,
+        outbound: WebSocketOutboundWriter
+    ) async {
+        let devices = await cameras.available()
+        let arr = devices.map { $0.wireDictionary }
+        let payload: [String: Any] = ["type": "camera_devices", "devices": arr]
+        if let bytes = try? JSONSerialization.data(withJSONObject: payload),
+           let json = String(data: bytes, encoding: .utf8) {
+            try? await outbound.write(.text(json))
+        }
+    }
+
+    @MainActor
+    private static func sendCameraState(
+        session: CameraSession,
+        outbound: WebSocketOutboundWriter
+    ) async {
+        let phase: String
+        var deviceUID: String? = nil
+        if case .streaming(let uid) = session.phase {
+            phase = "streaming"
+            deviceUID = uid
+        } else {
+            phase = "idle"
+        }
+        var payload: [String: Any] = [
+            "type": "camera_state",
+            "ok": session.lastError == nil,
+            "phase": phase,
+            "fps": session.fps,
+        ]
+        if let uid = deviceUID { payload["device"] = uid }
+        if let err = session.lastError { payload["error"] = err }
+        if let bytes = try? JSONSerialization.data(withJSONObject: payload),
+           let json = String(data: bytes, encoding: .utf8) {
+            try? await outbound.write(.text(json))
+        }
+    }
+
     /// Triage one upstream text line: stream config first (cheapest
     /// to detect), then format-level verbs, then gesture dispatch as
     /// the catch-all. ReconfigParser returns the same config when
@@ -963,6 +1288,94 @@ struct Server: Sendable {
             headers: [.location: path],
             body: .init(byteBuffer: ByteBuffer(string: ""))
         )
+    }
+
+    private static func rejectUntrustedBrowserRequest(
+        _ request: Request,
+        bindHost: String,
+        bindPort: Int
+    ) -> Response? {
+        guard !isTrustedBrowserRequest(request, bindHost: bindHost, bindPort: bindPort) else {
+            return nil
+        }
+        return errorJSON("forbidden origin", status: .forbidden)
+    }
+
+    /// Browsers can drive localhost services from another site unless the
+    /// service checks `Origin`. For a loopback bind, also reject DNS-rebind
+    /// style `Host` values that are not loopback names.
+    static func isTrustedBrowserRequest(
+        _ request: Request,
+        bindHost: String,
+        bindPort: Int
+    ) -> Bool {
+        if isLoopbackBind(bindHost),
+           let authority = request.head.authority,
+           let requestHost = parseAuthority(authority)?.host,
+           !isLoopbackHost(requestHost) {
+            return false
+        }
+
+        if let fetchSite = request.headers[.secFetchSite]?.lowercased(),
+           fetchSite == "cross-site" {
+            return false
+        }
+
+        guard let origin = request.headers[.origin] else { return true }
+        guard let originURL = URLComponents(string: origin),
+              let originHost = originURL.host else {
+            return false
+        }
+
+        let authority = request.head.authority ?? "\(bindHost):\(bindPort)"
+        guard let requestAuthority = parseAuthority(authority) else { return false }
+        let requestPort = requestAuthority.port ?? bindPort
+        let originPort = originURL.port ?? defaultPort(for: originURL.scheme)
+
+        if isLoopbackBind(bindHost) {
+            return isLoopbackHost(originHost)
+                && isLoopbackHost(requestAuthority.host)
+                && (originPort ?? requestPort) == requestPort
+        }
+
+        return originHost.caseInsensitiveCompare(requestAuthority.host) == .orderedSame
+            && (originPort ?? requestPort) == requestPort
+    }
+
+    private static func parseAuthority(_ raw: String) -> (host: String, port: Int?)? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+
+        if value.hasPrefix("["),
+           let close = value.firstIndex(of: "]") {
+            let host = String(value[value.index(after: value.startIndex)..<close])
+            let rest = value[value.index(after: close)...]
+            let port = rest.hasPrefix(":") ? Int(rest.dropFirst()) : nil
+            return (host, port)
+        }
+
+        let parts = value.split(separator: ":", omittingEmptySubsequences: false)
+        if parts.count == 1 { return (String(parts[0]), nil) }
+        guard let last = parts.last, let port = Int(last) else { return (value, nil) }
+        return (parts.dropLast().joined(separator: ":"), port)
+    }
+
+    private static func defaultPort(for scheme: String?) -> Int? {
+        switch scheme?.lowercased() {
+        case "http", "ws": return 80
+        case "https", "wss": return 443
+        default: return nil
+        }
+    }
+
+    private static func isLoopbackBind(_ host: String) -> Bool {
+        let lower = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
+        return lower == "localhost" || lower == "::1" || lower.hasPrefix("127.")
+    }
+
+    private static func isLoopbackHost(_ host: String) -> Bool {
+        let lower = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
+        return lower == "localhost" || lower == "::1" || lower.hasPrefix("127.")
     }
 }
 
@@ -1101,12 +1514,11 @@ private func jsonResponse(_ object: [String: Any], status: HTTPResponse.Status =
 }
 
 private func errorJSON(_ message: String, status: HTTPResponse.Status) -> Response {
-    let escaped = message.replacingOccurrences(of: "\"", with: "\\\"")
     return Response(
         status: status,
         headers: [.contentType: "application/json"],
         body: .init(byteBuffer: ByteBuffer(string:
-            "{\"ok\":false,\"error\":\"\(escaped)\"}"
+            "{\"ok\":false,\"error\":\"\(jsonEscape(message))\"}"
         ))
     )
 }
@@ -1209,4 +1621,9 @@ private func contentType(for filename: String) -> String {
     if filename.hasSuffix(".png")  { return "image/png" }
     if filename.hasSuffix(".jpg") || filename.hasSuffix(".jpeg") { return "image/jpeg" }
     return "application/octet-stream"
+}
+
+private extension HTTPField.Name {
+    static let secFetchSite = Self("Sec-Fetch-Site")!
+    static let contentSecurityPolicy = Self("Content-Security-Policy")!
 }

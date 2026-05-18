@@ -13,6 +13,7 @@ struct Baguette: AsyncParsableCommand {
             InputCommand.self,
             StreamCommand.self,
             TapCommand.self,
+            DoubleTapCommand.self,
             SwipeCommand.self,
             PinchCommand.self,
             PanCommand.self,

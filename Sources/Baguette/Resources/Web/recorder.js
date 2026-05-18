@@ -2,8 +2,10 @@
 // to a WebM/MP4 file. Spins up a compose canvas only while recording;
 // idles cost zero. Reuses what's already in the page:
 //
-//   • frameImg     — the bezel <img> DeviceFrame already loaded
-//   • layout       — the chrome.json layout already fetched
+//   • frameImg     — the bezel <img> the Baguette SDK loaded
+//   • screen       — the SDK `SimulatorDefinition.screen` block
+//                    (`viewport`, `rect`, `clipRadius`). Used for the
+//                    bezel cutout coords + corner radius.
 //   • sourceCanvas — the live decoded canvas StreamSession is painting
 //   • overlayHost  — PinchOverlay's DOM container (we read positions
 //                    out of it each frame, no caching)
@@ -13,7 +15,7 @@
 // download link.
 //
 //   const rec = new BrowserRecorder({
-//     canvas, frameImg, layout, overlayHost, fps: 60,
+//     canvas, frameImg, screen: def.screen, overlayHost, fps: 60,
 //   });
 //   rec.start();
 //   const artifact = await rec.stop();
@@ -48,7 +50,7 @@
     opts = opts || {};
     this.sourceCanvas = opts.canvas;
     this.frameImg    = opts.frameImg    || null;
-    this.layout      = opts.layout      || null;
+    this.screen      = opts.screen      || null;     // SDK SimulatorDefinition.screen
     this.overlayHost = opts.overlayHost || null;
     this.fps         = opts.fps || 60;
     // Visible-quality knob. Default 12 Mbps — well above the browser's
@@ -82,7 +84,7 @@
     // Compose canvas size: bezel composite when available, source-canvas
     // size otherwise. The compose canvas is the recording's full output
     // — captureStream samples it at fps.
-    const size = composeSize(this.frameImg, this.layout, this.sourceCanvas);
+    const size = composeSize(this.frameImg, this.screen, this.sourceCanvas);
     this.compose = document.createElement('canvas');
     this.compose.width  = size.w;
     this.compose.height = size.h;
@@ -128,11 +130,11 @@
     ctx.clearRect(0, 0, cw, ch);
 
     const useBezel = this.frameImg && this.frameImg.naturalWidth > 0
-                  && this.layout && this.layout.composite && this.layout.screen;
+                  && this.screen && this.screen.viewport && this.screen.rect;
 
     if (useBezel) {
-      const s = this.layout.screen;
-      const r = this.layout.innerCornerRadius || 0;
+      const s = this.screen.rect;
+      const r = this.screen.clipRadius || 0;
 
       // 1. Bezel as background. DeviceKit composites render the screen
       //    area as opaque dark "off" glass meant to sit UNDER the live
@@ -240,9 +242,9 @@
 
   // ── helpers ──────────────────────────────────────────────────
 
-  function composeSize(frameImg, layout, sourceCanvas) {
-    if (frameImg && frameImg.naturalWidth > 0 && layout && layout.composite) {
-      return { w: layout.composite.width, h: layout.composite.height };
+  function composeSize(frameImg, screen, sourceCanvas) {
+    if (frameImg && frameImg.naturalWidth > 0 && screen && screen.viewport) {
+      return { w: screen.viewport.width, h: screen.viewport.height };
     }
     if (sourceCanvas && sourceCanvas.width > 0) {
       return { w: sourceCanvas.width, h: sourceCanvas.height };

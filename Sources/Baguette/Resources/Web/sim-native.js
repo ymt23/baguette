@@ -32,18 +32,13 @@
 
   // --- State -------------------------------------------------------
   let session = null;
-  let frame = null;
-  let surface = null;
-  let simInput = null;
-  let mouseSource = null;
-  let pinchOverlay = null;
-  let keyboardCapture = null;
+  let sim = null;           // Baguette SDK Simulator
   let logPanel = null;
   let axInspector = null;
+  let cameraPanel = null;   // CameraPanel — Mac webcam → /tmp/SimCam.bgra
   let reviewMode = null;
   let reviewToggleInFlight = false;
   let lastPaintedSize = { w: 0, h: 0 };
-  let layout = null;
   let deviceName = '';
 
   // CW rotation cycle. Two flavours — iPhone UIKit refuses
@@ -146,6 +141,55 @@
     }
   }
 
+  // Remap a Baguette-wire envelope from the rotated visual frame
+  // to the device's portrait coord frame. The Baguette SDK's
+  // PointerInterpreter computes finger coords against screenArea's
+  // bounding rect, which after CSS rotation is the ROTATED bbox —
+  // so the chrome-pixel coords in each envelope are in the user's
+  // visual frame. iOS expects portrait coords, so we rotate them
+  // before the WebSocket send.
+  //
+  // Replaces the legacy `remapPayloadToPortrait` (operated on the
+  // SimInput `kind:` dialect) with the same logic on the new
+  // `type:` envelopes.
+  function remapEnvelopeToPortrait(p) {
+    if (!p || !p.type) return p;
+    const W = p.width || 0, H = p.height || 0;
+    const remapPx = (x, y) => {
+      if (!W || !H) return { x, y };
+      const r = visualToPortraitNorm(x / W, y / H);
+      return { x: r.x * W, y: r.y * H };
+    };
+    switch (p.type) {
+      case 'tap': {
+        const r = remapPx(p.x, p.y);
+        return { ...p, x: r.x, y: r.y };
+      }
+      case 'swipe': {
+        const a = remapPx(p.startX, p.startY);
+        const b = remapPx(p.endX,   p.endY);
+        return { ...p, startX: a.x, startY: a.y, endX: b.x, endY: b.y };
+      }
+      case 'touch1-down':
+      case 'touch1-move':
+      case 'touch1-up': {
+        const r = remapPx(p.x, p.y);
+        const env = { ...p, x: r.x, y: r.y };
+        if (p.edge) env.edge = visualToPortraitEdge(p.edge);
+        return env;
+      }
+      case 'touch2-down':
+      case 'touch2-move':
+      case 'touch2-up': {
+        const a = remapPx(p.x1, p.y1);
+        const b = remapPx(p.x2, p.y2);
+        return { ...p, x1: a.x, y1: a.y, x2: b.x, y2: b.y };
+      }
+      default:
+        return p;
+    }
+  }
+
   // Map a screen-edge name from the user's visual frame to the
   // device's portrait coord frame. When the device is rotated, the
   // user's visual bottom corresponds to a *different* physical
@@ -194,20 +238,6 @@
     }
   }
 
-  // Map a pixel coord from the rotated visual bbox back to the
-  // unrotated DOM-local frame (the screenArea's own pre-rotation
-  // pixel grid). Used when placing pinch-overlay dots — their CSS
-  // left/top is in unrotated local pixels, so we have to undo the
-  // wrapper's rotation before the dot lines up under the cursor.
-  function visualToUnrotatedLocalPx(vx, vy, w, h) {
-    switch (currentOrientation) {
-      case 'landscape-right':       return { x: h - vy,    y: vx        };
-      case 'portrait-upside-down':  return { x: w - vx,    y: h - vy    };
-      case 'landscape-left':        return { x: vy,        y: w - vx    };
-      default:                      return { x: vx,        y: vy        };
-    }
-  }
-
   // --- Bootstrap ---------------------------------------------------
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot, { once: true });
@@ -238,8 +268,8 @@
     document.body.insertAdjacentHTML('beforeend', html);
 
     // 2. Resolve device name + iOS runtime from the list endpoint.
-    //    chrome.json gives us the bezel; /simulators.json gives us
-    //    the human-readable identity that sits above it.
+    //    The SDK definition gives us the bezel; /simulators.json gives
+    //    us the human-readable identity that sits above it.
     const meta = await fetchDeviceMeta(udid);
     deviceName = meta.name;
     const nameEl = document.getElementById('nativeDeviceName');
@@ -248,31 +278,35 @@
     if (osEl)   osEl.textContent   = meta.runtime;
     document.title = `${meta.name} — Baguette`;
 
-    // 3. Layout drives bezel + screen rect + corner radius. Same
-    //    endpoint sim-stream.js uses.
-    layout = await fetch(`/simulators/${encodeURIComponent(udid)}/chrome.json`)
-        .then((r) => (r.ok ? r.json() : null))
-        .catch(() => null);
-
-    // 4. Mount frame. Actionable mode is opt-in (toolbar toggle,
-    //    persisted to localStorage). When on, `bezel.png?buttons=
-    //    false` is fetched and BezelButtons overlays each hardware
-    //    button with hover/click animations that fire SimInput.
-    frame = new window.DeviceFrame({
-      udid, layout,
-      actionable: actionableEnabled(),
-      onPress: (name, duration) => simInput && simInput.button(name, duration),
+    // 3. Boot the Baguette SDK. It fetches `/definition.json`,
+    //    builds the bezel + overlay buttons + screen + keyboard,
+    //    and mounts everything interactive. The `send` closure
+    //    routes wire envelopes through the StreamSession's
+    //    WebSocket — but BEFORE forwarding it remaps coords and
+    //    edge flags from the rotated visual frame to portrait
+    //    (iOS expects portrait coords regardless of the bezel's
+    //    CSS rotation).
+    sim = await window.Baguette.use({
+      host: location.origin,
+      udid,
+      send: (payload) => {
+        if (!session) return;
+        const out = currentOrientation === 'portrait'
+          ? payload
+          : remapEnvelopeToPortrait(payload);
+        session.send(out);
+      },
+      getOrientation: () => currentOrientation,
+      log: (msg) => console.log('[native]', msg),
     });
-    surface = frame.mount(document.getElementById('nativeDeviceFrame'));
+    sim.mount(document.getElementById('nativeDeviceFrame'));
 
-    // 5. Open stream + wire input.
+    // 4. Open stream — paints frames into sim.canvas.
     startSession(pickFormat());
 
-    wireKeyboard();
     wireActions();
     wireUnload();
     applyStoredTheme();
-    reflectActionable();
 
     // Reset iOS to portrait on page boot. Without this, a page
     // reload would leave our JS state at `currentOrientation =
@@ -283,19 +317,6 @@
     // down to the user.
     fetch('/simulators/' + encodeURIComponent(udid) + '/orientation?value=portrait',
         { method: 'POST' }).catch(() => { /* best-effort */ });
-  }
-
-  // Actionable-bezel toggle. Off by default — the bezel renders
-  // as today's flat composite. On, the device-frame swaps to
-  // `bezel.png?buttons=false` and BezelButtons overlays each
-  // hardware button with hover/click animations.
-  const ACTIONABLE_KEY = 'baguette.actionableBezel';
-  function actionableEnabled() {
-    return localStorage.getItem(ACTIONABLE_KEY) === '1';
-  }
-  function setActionable(on) {
-    if (on) localStorage.setItem(ACTIONABLE_KEY, '1');
-    else    localStorage.removeItem(ACTIONABLE_KEY);
   }
 
   // Theme toggle. Three logical states — "auto" (no manual pin,
@@ -349,7 +370,7 @@
     };
     session = new window.StreamSession({
       udid, format, version: 'v2',
-      canvas: surface.canvas,
+      canvas: sim.canvas,
       onSize: (w, h) => { lastPaintedSize = { w, h }; },
       onFps:  (fps) => {
         const el = document.getElementById('nativeStatus');
@@ -360,12 +381,15 @@
     });
     session.start();
     reflectFormat(format);
-    wireInput(udid, frame.screenSize());
+    // Restore the cached orientation across format-swap remounts,
+    // so reopening the session doesn't snap the device back to
+    // portrait while the simulator is still landscape.
+    if (currentOrientation !== 'portrait') applyOrientation(currentOrientation);
     mountAxInspector();
   }
 
   // Lazy-mounts the AXInspector once a surface + session are ready.
-  // Re-runs on `remountFrame()` because the screen DOM and the
+  // Re-runs after format swaps because the screen DOM and the
   // session both change underneath it.
   //
   // Focus-mode UX:
@@ -378,13 +402,14 @@
       try { axInspector.detach(); } catch (_) { /* ignore */ }
       axInspector = null;
     }
-    if (!window.AXInspector || !surface) return;
+    if (!window.AXInspector || !sim) return;
     const panel = document.getElementById('nativeAxHost');
     axInspector = new window.AXInspector({
       // No `host` — toolbar drives enable/disable, panel surfaces selection.
-      screenArea: surface.screenArea,
+      screenArea: sim.screenArea,
       send: (payload) => session && session.send(payload),
-      getDeviceSize: () => frame.screenSize(),
+      // AX inspector reads `{w, h}`; SDK Screen exposes `{width, height}`.
+      getDeviceSize: () => ({ w: sim.screen.size.width, h: sim.screen.size.height }),
       onSelect: (node) => renderAxPanel(panel, node),
       onEnableChange: (enabled) => {
         const btn = document.getElementById('nativeAxToggle');
@@ -456,110 +481,8 @@
         ? 'avcc' : 'mjpeg';
   }
 
-  function wireInput(targetUdid, screenSize) {
-    // Detach any prior wiring — startSession() can be called multiple
-    // times when the user swaps formats, and a fresh transport must
-    // be bound to the new session. Without the detach the old
-    // overlay handlers stack up and pinch dots leak.
-    if (mouseSource) { try { mouseSource.detach(); } catch (_) {} mouseSource = null; }
-    if (pinchOverlay) { try { pinchOverlay.clear(); } catch (_) {} pinchOverlay = null; }
-
-    const log = (msg) => console.log('[native]', msg);
-    simInput = new window.SimInput({
-      udid: targetUdid,
-      log,
-      // Shared translator from sim-input-bridge.js — wrapped here
-      // so user gestures captured in the rotated visual frame are
-      // remapped back to the device's portrait coord system
-      // before the bridge converts them to wire envelopes.
-      transport: makeOrientationTransport(session, log),
-    });
-    simInput.setScreenSize(screenSize.w, screenSize.h);
-    pinchOverlay = makeOrientationPinchOverlay(surface.screenArea);
-    // Restore the cached orientation across format-swap remounts,
-    // so reopening the session doesn't snap the device back to
-    // portrait while the simulator is still landscape.
-    if (currentOrientation !== 'portrait') applyOrientation(currentOrientation);
-    mouseSource = new window.MouseGestureSource({
-      el: surface.screenArea,
-      input: simInput,
-      overlay: pinchOverlay,
-      log,
-      getOrientation: () => currentOrientation,
-    });
-    mouseSource.attach();
-  }
-
-  // Wrap SimInputBridge's transport with a normalized-coord
-  // remapper. MouseGestureSource computes finger coords against
-  // screenArea's bounding rect, which after CSS rotation is the
-  // ROTATED bbox — so the normalized [0, 1] coords arriving here
-  // are in the user's visual frame. We translate them to portrait
-  // device-norm before the bridge multiplies by width/height
-  // (still portrait pixel dims) to produce wire envelopes.
-  function makeOrientationTransport(session, log) {
-    const inner = window.SimInputBridge.makeTransport(session, log);
-    return (payload) => inner(remapPayloadToPortrait(payload));
-  }
-
-  function remapPayloadToPortrait(payload) {
-    if (currentOrientation === 'portrait' || !payload) return payload;
-    switch (payload.kind) {
-      case 'tap': {
-        const p = visualToPortraitNorm(payload.x, payload.y);
-        return { ...payload, x: p.x, y: p.y };
-      }
-      case 'swipe': {
-        const a = visualToPortraitNorm(payload.x1, payload.y1);
-        const b = visualToPortraitNorm(payload.x2, payload.y2);
-        return { ...payload, x1: a.x, y1: a.y, x2: b.x, y2: b.y };
-      }
-      case 'touchDown':
-      case 'touchMove':
-      case 'touchUp': {
-        const fingers = (payload.fingers || []).map((f) => visualToPortraitNorm(f.x, f.y));
-        const edge = visualToPortraitEdge(payload.edge);
-        return { ...payload, fingers, edge };
-      }
-      default:
-        return payload;
-    }
-  }
-
-  // Wrap PinchOverlay so dot positions are placed in the
-  // unrotated DOM-local frame even when the user's cursor (and
-  // therefore the (x, y) we receive) is in the rotated visual
-  // frame. Without this, dots drift away from the cursor as soon
-  // as the device is in landscape.
-  function makeOrientationPinchOverlay(host) {
-    const inner = new window.PinchOverlay(host);
-    return {
-      setFingers(points) {
-        if (currentOrientation === 'portrait') return inner.setFingers(points);
-        const r = host.getBoundingClientRect();
-        const w = r.width, h = r.height;
-        const remapped = points.map(({ x, y }) => visualToUnrotatedLocalPx(x, y, w, h));
-        return inner.setFingers(remapped);
-      },
-      clear() { inner.clear(); },
-    };
-  }
-
-  // Wire host-keyboard → simulator. Focus-gated: while the screen
-  // area has focus, every supported keystroke is forwarded as a wire
-  // `key` event (W3C `event.code` + modifier flags); when focus is
-  // elsewhere (toolbar, header, etc.) the host browser keeps its
-  // shortcuts. `mousedown` on the screen takes focus so the gate
-  // opens automatically when the user starts interacting with iOS.
-  function wireKeyboard() {
-    const el = surface.screenArea;
-    el.addEventListener('mousedown', () => el.focus());
-    keyboardCapture = new window.KeyboardCapture({ target: el, simInput: () => simInput });
-    keyboardCapture.start();
-  }
-
   function wireActions() {
-    window.__nativeHome = () => simInput && simInput.button('home');
+    window.__nativeHome = () => sim && sim.pressButton('home');
     // App switcher — fires the new `app-switcher` virtual button
     // on the server side. The Swift `IndigoHIDInput` decomposes it
     // into two consecutive home `IndigoHIDMessageForButton` presses
@@ -567,7 +490,7 @@
     // (works on Face ID iPhones with no physical home button). No
     // gesture coordinates involved, so device rotation is a non-
     // issue here.
-    window.__nativeAppSwitcher = () => simInput && simInput.button('app-switcher');
+    window.__nativeAppSwitcher = () => sim && sim.pressButton('app-switcher');
     window.__nativeScreenshot = () => downloadSnapshot();
     window.__nativeClose = () => {
       // Shutting the window from inside a popup-style URL: try
@@ -576,23 +499,28 @@
       try { window.close(); } catch (_) { /* ignore */ }
       if (!window.closed) location.href = '/simulators';
     };
-    window.__nativeSetFormat = (next) => {
+    window.__nativeSetFormat = async (next) => {
       if (next !== 'avcc' && next !== 'mjpeg') return;
       const current = localStorage.getItem('asc.simFormat') || pickFormat();
       if (current === next && session) return;
+      if (reviewMode && reviewMode.isEnabled && reviewMode.isEnabled()) {
+        if (reviewModeHasDrafts()) {
+          const ok = await confirmReviewDiscard(reviewDiscardMessage('change stream format'));
+          if (!ok) return;
+        }
+        try { reviewMode.disable(); } catch (_) { /* ignore */ }
+        reviewMode = null;
+        const btn = document.getElementById('nativeReviewToggle');
+        if (btn) btn.classList.remove('active');
+      }
       localStorage.setItem('asc.simFormat', next);
       startSession(next);
     };
     window.__nativeToggleTheme = () => {
       setTheme(currentTheme() === 'light' ? 'dark' : 'light');
     };
-    window.__nativeToggleActionable = () => {
-      const next = !actionableEnabled();
-      setActionable(next);
-      reflectActionable();
-      remountFrame();
-    };
     window.__nativeToggleLogs = () => toggleLogs();
+    window.__nativeToggleCamera = () => toggleCamera();
     window.__nativeToggleAx = () => {
       if (!axInspector) return;
       if (axInspector.isEnabled()) axInspector.disable();
@@ -640,7 +568,7 @@
   }
 
   async function toggleReviewMode() {
-    if (!surface || !window.CodexReviewMode) return;
+    if (!sim || !sim.screenArea || !window.CodexReviewMode) return;
     if (reviewToggleInFlight) return;
     reviewToggleInFlight = true;
     const btn = document.getElementById('nativeReviewToggle');
@@ -656,19 +584,17 @@
         reviewMode = null;
         if (btn) btn.classList.remove('active');
         startSession(pickFormat());
-        wireKeyboard();
         return;
       }
 
       if (axInspector && axInspector.isEnabled()) axInspector.disable();
-      stopInteractiveWiring();
       if (session) { try { session.stop(); } catch (_) {} session = null; }
 
       reviewMode = new window.CodexReviewMode({
         udid,
-        screenArea: surface.screenArea,
+        screenArea: sim.screenArea,
         panel,
-        getDeviceSize: () => frame.screenSize(),
+        getDeviceSize: () => ({ w: sim.screen.size.width, h: sim.screen.size.height }),
         onStatus: (text) => {
           const el = document.getElementById('nativeStatus');
           if (el) el.textContent = text || '';
@@ -682,7 +608,6 @@
         try { reviewMode.disable(); } catch (_) { /* ignore */ }
         reviewMode = null;
         startSession(pickFormat());
-        wireKeyboard();
       }
     } finally {
       reviewToggleInFlight = false;
@@ -718,7 +643,7 @@
         node,
         {
           send: (payload) => session && session.send(payload),
-          getDeviceSize: () => frame.screenSize(),
+          getDeviceSize: () => ({ w: sim.screen.size.width, h: sim.screen.size.height }),
         }
     );
   }
@@ -748,51 +673,34 @@
     }
   }
 
-  // Re-mount the device frame after the actionable toggle flips. Tear
-  // down current input wiring + bezel buttons, rebuild the frame in
-  // the new mode, and re-bind a fresh SimInput chain over the new
-  // surface. The live stream stays open — the canvas is the same
-  // element, only the bezel image and overlays change.
-  function remountFrame() {
-    if (!frame) return;
-    if (reviewMode) {
-      if (reviewModeHasDrafts()) {
-        confirmReviewDiscard(reviewDiscardMessage('remount the device frame')).then((ok) => {
-          if (ok) remountFrameDiscardingReview();
-        });
-        return;
-      }
-      remountFrameDiscardingReview();
-      return;
-    }
-    remountFrameDiscardingReview();
-  }
-
-  function remountFrameDiscardingReview() {
-    if (!frame) return;
-    if (reviewMode) {
-      try { reviewMode.disable(); } catch (_) { /* ignore */ }
-      reviewMode = null;
-      const btn = document.getElementById('nativeReviewToggle');
+  // Camera sheet — same lazy-mount pattern as logs. The CameraPanel
+  // owns its WS (/simulators/<udid>/camera); closing the sheet leaves
+  // the panel mounted so reopening doesn't drop the streaming state
+  // or device selection. The toolbar button's `.streaming` class
+  // tracks the panel's reported phase so the user sees "camera on"
+  // at a glance even when the sheet is closed.
+  function toggleCamera() {
+    const view = document.getElementById('simNativeView');
+    const host = document.getElementById('nativeCameraHost');
+    const btn  = document.getElementById('nativeCameraToggle');
+    const open = view && view.getAttribute('data-camera') === 'open';
+    if (!view || !host) return;
+    if (open) {
+      view.removeAttribute('data-camera');
       if (btn) btn.classList.remove('active');
+    } else {
+      view.setAttribute('data-camera', 'open');
+      if (btn) btn.classList.add('active');
+      if (!cameraPanel && window.CameraPanel && udid) {
+        host.innerHTML = '';
+        cameraPanel = new window.CameraPanel();
+        cameraPanel.onPhaseChange = (phase) => {
+          const indicator = document.getElementById('nativeCameraToggle');
+          if (indicator) indicator.classList.toggle('streaming', phase === 'streaming');
+        };
+        cameraPanel.attach(host, udid);
+      }
     }
-    if (mouseSource) { try { mouseSource.detach(); } catch (_) {} mouseSource = null; }
-    if (pinchOverlay) { try { pinchOverlay.clear(); } catch (_) {} pinchOverlay = null; }
-    if (keyboardCapture) { try { keyboardCapture.stop(); } catch (_) {} keyboardCapture = null; }
-    if (surface && surface.bezelButtons) {
-      try { surface.bezelButtons.unmount(); } catch (_) { /* ignore */ }
-    }
-    frame = new window.DeviceFrame({
-      udid, layout,
-      actionable: actionableEnabled(),
-      onPress: (name, duration) => simInput && simInput.button(name, duration),
-    });
-    surface = frame.mount(document.getElementById('nativeDeviceFrame'));
-    // StreamSession captures the canvas at construction; the
-    // remount produced a fresh canvas so we have to reopen the
-    // session against it. Reuse the format the user already chose.
-    startSession(pickFormat());
-    wireKeyboard();
   }
 
   function reviewModeHasDrafts() {
@@ -840,25 +748,13 @@
     });
   }
 
-  function stopInteractiveWiring() {
-    if (mouseSource) { try { mouseSource.detach(); } catch (_) {} mouseSource = null; }
-    if (pinchOverlay) { try { pinchOverlay.clear(); } catch (_) {} pinchOverlay = null; }
-    if (keyboardCapture) { try { keyboardCapture.stop(); } catch (_) {} keyboardCapture = null; }
-    simInput = null;
-  }
-
-  function reflectActionable() {
-    const btn = document.getElementById('nativeActionableToggle');
-    if (btn) btn.classList.toggle('active', actionableEnabled());
-  }
-
   function wireUnload() {
     window.addEventListener('beforeunload', () => {
       try { if (session) session.stop(); } catch (_) { /* ignore */ }
-      try { if (mouseSource) mouseSource.detach(); } catch (_) { /* ignore */ }
-      try { if (keyboardCapture) keyboardCapture.stop(); } catch (_) { /* ignore */ }
+      try { if (sim) sim.detach(); } catch (_) { /* ignore */ }
       try { if (axInspector) axInspector.detach(); } catch (_) { /* ignore */ }
       try { if (reviewMode) reviewMode.disable(); } catch (_) { /* ignore */ }
+      try { if (cameraPanel) cameraPanel.detach(); } catch (_) { /* ignore */ }
     });
   }
 
@@ -872,11 +768,11 @@
   // skip CaptureGallery here — the focus chrome has nowhere to put a
   // thumbnail strip, and the user just wants the file.
   function downloadSnapshot() {
-    if (!surface || !surface.canvas) return;
-    const w = lastPaintedSize.w || surface.canvas.width;
-    const h = lastPaintedSize.h || surface.canvas.height;
+    if (!sim || !sim.canvas) return;
+    const w = lastPaintedSize.w || sim.canvas.width;
+    const h = lastPaintedSize.h || sim.canvas.height;
     if (!w || !h) return;
-    surface.canvas.toBlob((blob) => {
+    sim.canvas.toBlob((blob) => {
       if (!blob) return;
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const safe = (deviceName || 'simulator').replace(/[^A-Za-z0-9._-]/g, '_');

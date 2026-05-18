@@ -39,6 +39,11 @@ let package = Package(
                 // self-contained — open in a browser via file:// for a
                 // design preview without booting the server.
                 .copy("Resources/Web"),
+                // iOS-Simulator dylib (vendored under `VirtualCamera/`,
+                // built by `VirtualCamera/build.sh` and staged here by
+                // the top-level `build.sh`). `VirtualCameraInstaller`
+                // resolves the bundle path at runtime.
+                .copy("Resources/VirtualCamera"),
             ],
             swiftSettings: [
                 // MOCKING is debug-only; release strips mock code entirely.

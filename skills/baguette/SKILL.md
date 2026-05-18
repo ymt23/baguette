@@ -187,6 +187,17 @@ Wired (use freely):
   emits `{"type":"log","line":"..."}` text frames per entry.
   Levels: only `default | info | debug` (iOS-runtime narrow — host
   `notice / error / fault` are rejected at the wire).
+- `camera` — pipe a Mac webcam (FaceTime HD, USB, Continuity Camera)
+  into the iOS app's `AVCaptureVideoPreviewLayer` /
+  `AVCapturePhotoOutput` / `UIImagePickerController`. No CLI in v1;
+  use the WS at `WS /simulators/<UDID>/camera` — `camera_list` /
+  `camera_start` / `camera_stop` / `camera_set_flags` upstream,
+  `camera_devices` / `camera_state` downstream (phase = `idle |
+  streaming`, plus live `fps`). Frames flow through `/tmp/SimCam.bgra`
+  (24-byte LE header + BGRA pixels) into `VirtualCamera.dylib`
+  loaded inside the simulator via `DYLD_INSERT_LIBRARIES`. Apps
+  launched *before* arming don't load the dylib — relaunch them.
+  Browser UI lives under the Camera card on `/simulators/<UDID>`.
 
 NOT wired (skill should NOT propose these):
 - **Non-ASCII text** through `type` — IME / Pinyin / accented / emoji
