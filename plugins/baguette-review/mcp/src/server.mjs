@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const PLUGIN_VERSION = '0.1.1';
+const PLUGIN_VERSION = '0.1.2';
 const REVIEW_API_VERSION = '1';
 const PAYLOAD_VERSION = '1';
 const DEFAULT_BASE_URL = process.env.BAGUETTE_REVIEW_BASE_URL || 'http://127.0.0.1:8421';

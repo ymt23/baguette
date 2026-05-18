@@ -1,6 +1,6 @@
 ---
 name: baguette-review-apply
-baguetteReviewTemplateVersion: 0.1.1
+baguetteReviewTemplateVersion: 0.1.2
 annotationPayloadVersion: 1
 description: Apply Baguette CX Review annotations to this iOS project by mapping targets to source, implementing fixes, and verifying with the project test workflow.
 ---

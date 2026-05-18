@@ -3,7 +3,7 @@
 // thumbnail strip. The captures array is mirrored to
 // `window.simCaptures` for any legacy code that still inspects it.
 //
-//   const gallery = new CaptureGallery({ udid, layout, frameImg });
+//   const gallery = new CaptureGallery({ udid, screen: def.screen, frameImg });
 //   await gallery.capture({ withFrame: true, naturalSize: { w, h } });
 //   gallery.renderInto(galleryEl, countEl);
 //   gallery.clear();
@@ -13,9 +13,9 @@
 (function () {
   'use strict';
 
-  function CaptureGallery({ udid, layout, frameImg }) {
+  function CaptureGallery({ udid, screen, frameImg }) {
     this.udid = udid;
-    this.layout = layout;
+    this.screen = screen;        // SDK SimulatorDefinition.screen
     this.frameImg = frameImg;
     window.simCaptures = window.simCaptures || [];
   }
@@ -31,7 +31,7 @@
     const wantFrame = withFrame && fimg && fimg.naturalWidth > 0;
 
     if (wantFrame) {
-      const dataUrl = await composite(screenshotUrl, fimg, this.layout);
+      const dataUrl = await composite(screenshotUrl, fimg, this.screen);
       const fw = fimg.naturalWidth, fh = fimg.naturalHeight;
       this._push({ dataUrl, w: fw, h: fh, withFrame: true });
       return { withFrame: true, w: fw, h: fh };
@@ -88,18 +88,21 @@
     });
   }
 
-  /** Draw the screenshot inside the bezel cutout (clipped to the
-   *  inner corner radius), then overlay the bezel image on top. */
-  function composite(screenshotDataUrl, frameImg, layout) {
+  /** Draw the bezel as background, then the screenshot on top
+   *  clipped to the inner corner radius. DeviceKit composites have
+   *  opaque dark "off" glass where the screen sits, so the screen
+   *  must go ABOVE the bezel — same Z order as Apple's Simulator
+   *  window and as BrowserRecorder. */
+  function composite(screenshotDataUrl, frameImg, screen) {
     return new Promise((resolve) => {
       const fw = frameImg.naturalWidth, fh = frameImg.naturalHeight;
-      const s = (layout && layout.screen) || null;
-      const ix = s ? s.x      : 0;
-      const iy = s ? s.y      : 0;
-      const sw = s ? s.width  : fw;
-      const sh = s ? s.height : fh;
-      const radius = (layout && typeof layout.innerCornerRadius === 'number')
-        ? layout.innerCornerRadius : 0;
+      const r = (screen && screen.rect) || null;
+      const ix = r ? r.x      : 0;
+      const iy = r ? r.y      : 0;
+      const sw = r ? r.width  : fw;
+      const sh = r ? r.height : fh;
+      const radius = (screen && typeof screen.clipRadius === 'number')
+        ? screen.clipRadius : 0;
 
       const canvas = document.createElement('canvas');
       canvas.width = fw; canvas.height = fh;
@@ -107,6 +110,7 @@
 
       const ssImg = new Image();
       ssImg.onload = () => {
+        ctx.drawImage(frameImg, 0, 0, fw, fh);
         ctx.save();
         ctx.beginPath();
         ctx.moveTo(ix + radius, iy);
@@ -122,7 +126,6 @@
         ctx.clip();
         ctx.drawImage(ssImg, ix, iy, sw, sh);
         ctx.restore();
-        ctx.drawImage(frameImg, 0, 0, fw, fh);
         resolve(canvas.toDataURL('image/png'));
       };
       ssImg.src = screenshotDataUrl;

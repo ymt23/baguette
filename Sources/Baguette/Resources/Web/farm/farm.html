@@ -37,11 +37,18 @@
 
 <script src="/stream-session.js"></script>
 <script src="/frame-decoder.js"></script>
-<script src="/device-frame.js"></script>
-<script src="/sim-input.js"></script>
-<script src="/sim-input-bridge.js"></script>
-<script src="/keyboard-capture.js"></script>
 <script src="/recorder.js"></script>
+<!-- Baguette SDK — farm-tile uses Transport / Screen / Keyboard
+     directly (no Bezel; the farm tile is its own surface). -->
+<script src="/baguette/transport.js"></script>
+<script src="/baguette/gestures/pinch-overlay.js"></script>
+<script src="/baguette/gestures/pointer-interpreter.js"></script>
+<script src="/baguette/parts/bezel.js"></script>
+<script src="/baguette/parts/screen.js"></script>
+<script src="/baguette/parts/button.js"></script>
+<script src="/baguette/parts/keyboard.js"></script>
+<script src="/baguette/simulator.js"></script>
+<script src="/baguette/baguette.js"></script>
 <script src="/farm/farm-views.js"></script>
 <script src="/farm/farm-tile.js"></script>
 <script src="/farm/farm-focus.js"></script>

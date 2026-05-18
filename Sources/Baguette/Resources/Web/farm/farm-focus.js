@@ -183,7 +183,7 @@
       const rec = new window.BrowserRecorder({
         canvas:      ctx.canvas,
         frameImg:    ctx.frameImg,
-        layout:      ctx.layout,
+        screen:      ctx.screen,
         overlayHost: ctx.overlayHost,
         fps: 60,
       });

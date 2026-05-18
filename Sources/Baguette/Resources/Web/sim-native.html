@@ -145,19 +145,27 @@
     max-width: 100%;
   }
 
-  /* `!important` overrides device-frame.js's inline `max-height: 70vh`
+  /* `!important` overrides the SDK Bezel's inline `max-height: 70vh`
      on both the wrapper <div> and the bezel <img> — those defaults
      are tuned for the sidebar layout and would cap the device to
      70% of the viewport here. The 68px subtracts the toolbar
-     (36px) + column gap (8px) + container padding (24px). */
+     (36px) + column gap (8px) + container padding (24px).
+
+     Uses `dvh` (dynamic viewport height) so iOS Safari's URL bar +
+     bottom toolbar are subtracted from the viewport, not overlaid on
+     top of the bezel. With plain `vh` the bezel renders behind the
+     Safari toolbar and the bottom of the device gets clipped. Falls
+     back to `vh` on engines that don't support `dvh`. */
   #simNativeView #nativeDeviceFrame,
   #simNativeView #nativeDeviceFrame > div {
-    max-height: calc(100vh - 68px) !important;
+    max-height: calc(100vh  - 68px) !important;
+    max-height: calc(100dvh - 68px) !important;
     max-width: 100% !important;
   }
   #simNativeView #nativeDeviceFrame img,
   #simNativeView #nativeDeviceFrame canvas {
-    max-height: calc(100vh - 68px) !important;
+    max-height: calc(100vh  - 68px) !important;
+    max-height: calc(100dvh - 68px) !important;
     max-width: 100% !important;
   }
 
@@ -195,7 +203,8 @@
   #simNativeView #nativeDeviceFrame[data-orientation="landscape-right"] canvas,
   #simNativeView #nativeDeviceFrame[data-orientation="landscape-left"] img,
   #simNativeView #nativeDeviceFrame[data-orientation="landscape-left"] canvas {
-    max-height: min(calc(100vh - 68px), calc(100vw - 32px)) !important;
+    max-height: min(calc(100vh  - 68px), calc(100vw - 32px)) !important;
+    max-height: min(calc(100dvh - 68px), calc(100vw - 32px)) !important;
   }
 
   /* Label group — clickable, returns to the simulator list. The
@@ -412,6 +421,64 @@
   #simNativeView .logs-sheet-body > [data-role="list"],
   #simNativeView .logs-sheet-body div[data-role="list"] {
     flex: 1; min-height: 0; max-height: none !important;
+  }
+
+  /* Camera control card. Mirrors `.ax-host` (top-right) on the
+     LEFT side so the two floating panels can coexist without
+     stacking conflicts. Sized for a control card — narrow, glass-
+     styled, slight fade animation. Crucially does NOT cover the
+     device frame: the user opens this to start the camera and then
+     looks at the iOS app's actual preview rendered on the
+     simulator screen — a bottom-anchored sheet would obscure that
+     exact area. */
+  #simNativeView .camera-host {
+    position: absolute;
+    top: 84px;
+    left: 24px;
+    z-index: 40;
+    width: 260px;
+    padding: 12px 14px;
+    background: var(--nv-bar-bg);
+    border: 1px solid var(--nv-bar-border);
+    border-radius: 12px;
+    box-shadow: var(--nv-bar-shadow), var(--nv-bar-inset);
+    backdrop-filter: blur(18px) saturate(1.5);
+    -webkit-backdrop-filter: blur(18px) saturate(1.5);
+    color: var(--nv-text);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-4px);
+    transition: opacity 0.16s ease, transform 0.16s ease;
+  }
+  #simNativeView[data-camera="open"] .camera-host {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+  #simNativeView .camera-host-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin: -2px 0 8px 0;
+    font: 600 12px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    letter-spacing: 0.02em;
+  }
+  #simNativeView .camera-host-close {
+    width: 22px; height: 22px;
+    color: var(--nv-text-muted);
+  }
+
+  /* Streaming indicator on the camera toolbar button — small green
+     dot in the top-right corner while the WS is reporting
+     `phase=streaming`. Persists when the card is closed, so the
+     user always knows the camera is on. */
+  #simNativeView #nativeCameraToggle { position: relative; }
+  #simNativeView #nativeCameraToggle.streaming::after {
+    content: '';
+    position: absolute;
+    top: 5px; right: 5px;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #22c55e;
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.7);
   }
 
   /* Accessibility-inspector floating panel. Sits top-right of the
@@ -917,23 +984,6 @@
       </div>
 
       <div class="tb-actions">
-      <!-- Actionable-bezel toggle. When active, hardware buttons on
-           the bezel become hover-animated, click-able overlays that
-           fire SimInput.button(name). Off by default — flat
-           composite is the safe baseline. -->
-      <button class="ico-btn" id="nativeActionableToggle"
-              title="Toggle actionable bezel buttons"
-              aria-label="Toggle actionable bezel buttons"
-              onclick="window.__nativeToggleActionable && window.__nativeToggleActionable()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-             stroke-linecap="round" stroke-linejoin="round" width="17" height="17">
-          <rect x="6"  y="3"  width="12" height="18" rx="3"/>
-          <line x1="3" y1="9"  x2="6"  y2="9"/>
-          <line x1="3" y1="13" x2="6"  y2="13"/>
-          <line x1="18" y1="9" x2="21" y2="9"/>
-        </svg>
-      </button>
-
       <!-- Orientation cycle button — one click advances the device
            90° clockwise (portrait → landscape-right →
            portrait-upside-down → landscape-left → portrait). All
@@ -969,7 +1019,7 @@
         </svg>
       </button>
 
-<!-- Accessibility-inspector toggle. When active, a translucent
+      <!-- Accessibility-inspector toggle. When active, a translucent
            overlay tracks the AX node under the cursor; clicking an
            element opens the AX sheet (slides up from the bottom)
            with selection details and Tap / Copy actions. -->
@@ -989,6 +1039,22 @@
         </svg>
       </button>
 
+        <!-- Camera toggle. Mirrors the logs-sheet pattern: click flips
+             `[data-camera="open"]` on `#simNativeView`, the bottom
+             sheet slides up. While the camera is streaming the
+             button's `.streaming` class lights a green dot in the
+             corner so the user sees the camera is on without
+             opening the sheet. -->
+        <button class="ico-btn" id="nativeCameraToggle" title="Toggle camera control"
+                aria-label="Toggle camera control"
+                onclick="window.__nativeToggleCamera && window.__nativeToggleCamera()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" stroke-linejoin="round" width="17" height="17">
+            <!-- Video-camera glyph: rectangle body + triangular lens flare. -->
+            <rect x="3" y="6.5" width="13" height="11" rx="2"/>
+            <path d="M16 10.5 21 8v8l-5-2.5z"/>
+          </svg>
+        </button>
         <button class="ico-btn" id="nativeLogsToggle" title="Toggle live log sheet"
                 aria-label="Toggle live log sheet"
                 onclick="window.__nativeToggleLogs && window.__nativeToggleLogs()">
@@ -1093,6 +1159,28 @@
       </button>
     </header>
     <div id="nativeLogsHost" class="logs-sheet-body"></div>
+  </aside>
+
+  <!-- Camera control card — floating glass panel, anchored top-left
+       of the device column (mirror of `.ax-host` on the right). The
+       toolbar's `nativeCameraToggle` flips `[data-camera="open"]`
+       on the root; CSS fades the card in/out. The CameraPanel
+       (sim-camera.js) is lazy-mounted on first open and retained
+       across subsequent toggles so the WS + selected camera survive
+       a close→reopen cycle. -->
+  <aside id="nativeCameraSheet" class="camera-host" aria-hidden="true">
+    <header class="camera-host-head">
+      <span>Camera</span>
+      <button class="ico-btn camera-host-close" title="Close camera"
+              aria-label="Close camera"
+              onclick="window.__nativeToggleCamera && window.__nativeToggleCamera()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="12" height="12">
+          <path d="M6 6 18 18"/><path d="M18 6 6 18"/>
+        </svg>
+      </button>
+    </header>
+    <div id="nativeCameraHost"></div>
   </aside>
 </div>
 

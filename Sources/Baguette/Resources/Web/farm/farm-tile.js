@@ -51,21 +51,22 @@
     // Frame-reported size in pixels; updated on every onSize callback.
     // Used as the input-plane fallback when there's no chrome layout.
     this.framePixelSize = { w: 0, h: 0 };
-    // Input plumbing — only attached while this tile is the focused
-    // device (FarmApp calls promote() / demote()). Each holds onto its
-    // detach handle so the same tile can re-promote without leaks.
-    this.simInput = null;
-    this.mouseSource = null;
-    this.keyboardCapture = null;
-    this.pinchOverlay = null;    // visual HUD shown during 2-finger gestures
-    this.inputLayout = null;     // chrome layout snapshot for sizing
+    // Active Baguette Simulator instances, keyed by the host element
+    // they were mounted into (grid host + focus host can both hold a
+    // sim concurrently). Each owns its own bezel + button overlays +
+    // screen + keyboard, all wired to this.session via the transport's
+    // send closure.
+    this._sims = new Map();
   }
 
   // Move the canvas into whichever screen-host element the latest view
   // produced for this udid. If the device is not booted, we leave the
   // host empty — its overlay (BOOTING / SHUTDOWN / etc.) shows through.
+  // `input:false` keeps grid tiles non-interactive on the screen
+  // surface so a click selects the tile instead of taping the device;
+  // the bezel's button overlays stay clickable either way.
   FarmTile.prototype.attach = function (host, opts) {
-    this._mountIn(host, opts, this.canvas, /* fitObject */ 'fill');
+    this._mountIn(host, { ...(opts || {}), input: false }, this.canvas, 'fill');
   };
 
   // Install the live mirror canvas in `host` (the focus preview) —
@@ -74,7 +75,7 @@
   // drives a per-frame redraw of the source into the mirror so the
   // focus pane shows live frames.
   FarmTile.prototype.attachMirror = function (host, opts) {
-    this._mountIn(host, opts, this.mirror, /* fitObject */ 'fill');
+    this._mountIn(host, { ...(opts || {}), input: true }, this.mirror, 'fill');
     this._startMirrorCopy();
   };
 
@@ -116,11 +117,11 @@
   };
 
   // Shared mount path. `useBezel` swaps the wrapper: when true, the
-  // existing DeviceFrame builds the bezel <img> + screenArea + a fresh
-  // canvas; we discard that canvas and graft the requested element
-  // (canvas or video mirror) into the screenArea so the live pipeline
-  // isn't disturbed. When false, the element sits raw inside the host
-  // and edge-fills it.
+  // Baguette SDK's Bezel part builds the bezel <img> + screenArea +
+  // a fresh canvas from the device definition; we discard that canvas
+  // and graft the requested element (live canvas or mirror) into the
+  // screenArea so the live pipeline isn't disturbed. When false, the
+  // element sits raw inside the host and edge-fills it.
   //
   // Idempotency matters: FarmApp.renderAll() runs on every filter or
   // telemetry change, and detaching a `<video>` from the DOM (even
@@ -129,8 +130,10 @@
   // bezel mode, so the mirror stream keeps running smoothly.
   FarmTile.prototype._mountIn = function (host, opts, element, fitObject) {
     if (!host) return;
-    const useBezel = !!(opts && opts.useBezel && window.DeviceFrame);
-    const layout = opts && opts.layout || null;
+    const def = (opts && opts.def) || null;          // SDK definition.json
+    const screenDef = def && def.screen;
+    const useBezel = !!(opts && opts.useBezel && def &&
+                        window.Baguette && window.Baguette._Simulator);
 
     if (useBezel) {
       // Already mounted in this host with the right element + mode? Skip.
@@ -141,49 +144,59 @@
       }
       host.innerHTML = '';
       host.classList.add('with-bezel');
-      const frame = new window.DeviceFrame({ udid: this.udid, layout });
-      const surface = frame.mount(host);
-      surface.canvas.replaceWith(element);
+      // Tear down any prior Simulator instance bound to this host —
+      // re-renders need a fresh mount, and the old buttons / pointer
+      // interpreters would leak otherwise.
+      this._detachSimFor(host);
+
+      // Compose via the SDK exactly as `Baguette.use` does — we just
+      // skip its definition fetch because farm-app has already cached
+      // it. `_Simulator.mount` builds bezel + per-button overlays +
+      // screen input + keyboard in a single call; nothing here for the
+      // farm to reinvent.
+      const B = window.Baguette;
+      const transport = new B._Transport({
+        send: (p) => this.session && this.session.send(p)
+      });
+      const sim = new B._Simulator(def, transport);
+      sim.mount(host);
+      // Graft the tile's live surface in place of the freshly-minted
+      // canvas the bezel built, so the existing StreamSession keeps
+      // painting where it already is.
+      sim.canvas.replaceWith(element);
+      // The grid tile is selectable; if we left the SDK's screen
+      // input wired there, every click on the screen surface would
+      // fire a tap to the device AND bubble up to the tile-select
+      // handler. Detach screen input on hosts that opted out — the
+      // bezel + per-button overlays stay clickable either way, and
+      // the keyboard never auto-focuses without input enabled.
+      if (!opts || !opts.input) {
+        try { sim.screen.detach(); } catch {}
+        if (sim.keyboard) { try { sim.keyboard.detach(); } catch {} }
+      }
       element.style.cssText =
         `display:block;width:100%;height:100%;object-fit:${fitObject};background:#000`;
-      // DeviceFrame sets the wrapper inline to `display:inline-block;
-      // max-height:70vh` (sized for the single-device page). In the
-      // farm grid the wrapper sits inside a fixed-height tile; the
-      // image inside has `height: 100%` and `width: auto`, which —
-      // combined with `max-width: 100%` clipping the wrapper to the
-      // column width — leaves the wrapper at the column box but the
-      // image overflowing or letterboxed inside it. screenArea uses
-      // percentages of the *wrapper*, so its rendered rectangle drifts
-      // from the bezel's actual screen rect. Canvas with object-fit:
-      // fill stretches to that drifted rectangle (most visible on
-      // squarish devices like Apple Watch).
+
+      // Bezel sets the wrapper inline to `display:inline-block;
+      // max-height:70dvh` (sized for the single-device page). In the
+      // farm grid the wrapper sits inside a fixed-height tile; without
+      // explicit dimensions the image at `height:100%; width:auto`
+      // overflows or letterboxes inside the column box, leaving
+      // screenArea (% of wrapper) drifted from the real bezel cutout.
       //
-      // Fix: size the wrapper in explicit pixels matching the
-      // composite's aspect ratio. We compute a fit-inside box of
-      // (host.width, host.height) that preserves the composite ratio,
-      // then pin wrapper.width/height to those numbers. The image at
-      // height:100%; width:auto then renders to exactly the wrapper
-      // bounds, screenArea percentages map onto the real bezel hole,
-      // and the canvas fills the device's true screen aspect.
-      const wrapper = host.firstElementChild;
-      const bezelImg = wrapper && wrapper.querySelector('img');
-      // DeviceFrame's inline style includes `max-height: 70vh` for the
-      // single-device page where the host is otherwise unconstrained.
-      // In the farm the wrapper carries explicit pixel dimensions, so
-      // the 70vh fights the layout: when the viewport is shorter than
-      // the wrapper, the image clamps below wrapper height, the screen
-      // rect (% of wrapper) drifts off the bezel cutout. Override here.
+      // Fix: size the wrapper in explicit pixels matching the bare
+      // composite's aspect ratio. Compute a fit-inside box of
+      // (host.width, host.height) that preserves the viewport ratio,
+      // then pin wrapper.width/height to those numbers.
+      const wrapper = sim._bezel.wrapper;
+      const bezelImg = sim._bezel.frameImg;
       if (bezelImg) {
         bezelImg.style.maxHeight = '100%';
         bezelImg.style.maxWidth  = '100%';
       }
-      if (wrapper && layout && layout.composite &&
-          layout.composite.width && layout.composite.height) {
-        const ratio = layout.composite.width / layout.composite.height;
-        // Fit the wrapper inside the host while preserving the
-        // composite's aspect ratio. Re-runs on host resize via the
-        // ResizeObserver below so window zoom / focus-pane resize
-        // keeps the bezel + screen rect aligned.
+      if (wrapper && screenDef && screenDef.viewport &&
+          screenDef.viewport.width && screenDef.viewport.height) {
+        const ratio = screenDef.viewport.width / screenDef.viewport.height;
         const fit = () => {
           const r = host.getBoundingClientRect();
           const maxW = r.width  || host.clientWidth  || 232;
@@ -202,10 +215,16 @@
           this._fitObserver.observe(host);
         }
       }
+
+      this._sims = this._sims || new Map();
+      this._sims.set(host, sim);
       host.dataset.bezelMounted = 'yes';
       host.dataset.activeKind = element.tagName;
       return;
     }
+    // Raw mode entered — drop any sim bound to this host before
+    // wiping the DOM (raw-mode branch below clears innerHTML).
+    this._detachSimFor(host);
 
     // Raw mode — strip any prior bezel scaffolding or stale element
     // and drop the requested element in. Idempotent: when the
@@ -238,11 +257,6 @@
       canvas: this.canvas,
       onSize: (w, h) => {
         this.framePixelSize = { w, h };
-        // While focused, keep SimInput's screen size in sync with the
-        // current frame — first-frame sizes the input plane; later
-        // resizes (from `set_scale` switches between thumb and full)
-        // re-anchor it without losing the active gesture state.
-        if (this.simInput) this.simInput.setScreenSize(...this.computeScreenSize());
         this.onSize(this.udid, w, h);
       },
       onFps:  (fps) => {
@@ -256,120 +270,66 @@
     setTimeout(() => this.applyConfig(THUMB), 200);
   };
 
-  // promote() upgrades stream quality AND wires gesture input. The
-  // wiring requires the canvas to have a parent (so the mouse source
-  // can attach to its bounding box) — FarmApp calls promote() after
-  // the canvas has been attached to the focus preview, so by this
-  // point `canvas.parentElement` is the element we want to listen on.
-  FarmTile.prototype.promote = function (opts) {
+  // promote() / demote() now toggle stream quality only. Input is
+  // wired by `Simulator.mount` inside `_mountIn` as soon as a bezel
+  // is mounted on the focus host, so the user gets gestures +
+  // keyboard automatically.
+  FarmTile.prototype.promote = function () {
     if (!this.session) { this.start(); }
     this.mode = 'full';
     this.applyConfig(FULL);
-    this.inputLayout = (opts && opts.layout) || null;
-    this.wireInput();
   };
 
   FarmTile.prototype.demote = function () {
     if (!this.session) return;
     this.mode = 'thumb';
     this.applyConfig(THUMB);
-    this.unwireInput();
-    // Stop the per-frame copy when the tile is no longer focused.
-    // The mirror element stays in DOM until FarmFocus.dispose()
-    // wipes the focus pane innerHTML; either way, no point burning
-    // a rAF loop when nothing's looking at the mirror.
+    // The mirror element stays in DOM until FarmFocus.dispose() wipes
+    // the focus pane innerHTML; either way, no point burning a rAF
+    // loop when nothing's looking at the mirror.
     this._stopMirrorCopy();
   };
 
-  // ---- input lifecycle ------------------------------------------------
-  // Resolve the input plane's logical size in device points. Order:
-  //   1. cached chrome layout's `screen.{width,height}` — accurate
-  //   2. last frame size from StreamSession.onSize — close enough at
-  //      scale=1, off-by-divisor at thumbnail scales. Won't matter
-  //      because FarmTile only wires input while in `full` mode.
-  //   3. iPhone-15-Pro-ish default — keeps math from dividing by zero
-  //      while the WS handshake completes.
-  FarmTile.prototype.computeScreenSize = function () {
-    if (this.inputLayout?.screen) {
-      return [this.inputLayout.screen.width, this.inputLayout.screen.height];
-    }
-    if (this.framePixelSize.w > 0) {
-      return [this.framePixelSize.w, this.framePixelSize.h];
-    }
-    return [402, 874];
+  // Detach the Simulator bound to a particular host, if any. Used by
+  // `_mountIn` on every re-render so each mount gets a clean slate
+  // (fresh bezel, fresh button overlays, fresh PointerInterpreter).
+  FarmTile.prototype._detachSimFor = function (host) {
+    const sim = this._sims.get(host);
+    if (!sim) return;
+    try { sim.detach(); } catch {}
+    this._sims.delete(host);
   };
 
-  FarmTile.prototype.wireInput = function () {
-    if (this.simInput || !this.session || !window.SimInput) return;
-    if (!window.SimInputBridge || !window.MouseGestureSource) return;
-    // The mirror lives in the focus pane while focused — that's the
-    // element the user sees and clicks. Mouse coords normalize against
-    // the listener element's bounding box, so attaching to the mirror
-    // (instead of the canvas, which stays in the grid) gives correct
-    // device-point math out of the box.
-    const target = this.mirror;
-    const host = target.parentElement;
-    if (!host) return;
-
-    this.simInput = new window.SimInput({
-      udid: this.udid,
-      log:  () => {},
-      transport: window.SimInputBridge.makeTransport(this.session)
-    });
-    this.simInput.setScreenSize(...this.computeScreenSize());
-
-    if (window.PinchOverlay) {
-      this.pinchOverlay = new window.PinchOverlay(host);
-    }
-
-    target.style.cursor = 'crosshair';
-    target.style.touchAction = 'none';
-    target.tabIndex = 0;
-    this.mouseSource = new window.MouseGestureSource({
-      el:    target,
-      input: this.simInput,
-      overlay: this.pinchOverlay,
-      log:   () => {}
-    });
-    this.mouseSource.attach();
-
-    // Mac keyboard → focused tile. Same focus-gated capture used by
-    // sim-native: mousedown on the mirror takes focus; while focused,
-    // every supported keystroke flows through `simInput.key`. Click
-    // out (or focus another tile) → host browser shortcuts work again.
-    if (window.KeyboardCapture) {
-      target.addEventListener('mousedown', () => target.focus());
-      this.keyboardCapture = new window.KeyboardCapture({
-        target,
-        simInput: () => this.simInput,
-      });
-      this.keyboardCapture.start();
-    }
+  // Forward sidebar buttons (home / lock / volume) to the device.
+  // Any active sim shares the same transport sink (this.session.send),
+  // so picking the first one is sufficient. No-op if no sim is mounted
+  // (e.g. bezels-off mode with focus pane empty).
+  FarmTile.prototype._anySim = function () {
+    return this._sims.values().next().value || null;
   };
-
-  FarmTile.prototype.unwireInput = function () {
-    if (this.mouseSource && typeof this.mouseSource.detach === 'function') {
-      try { this.mouseSource.detach(); } catch {}
-    }
-    this.mouseSource = null;
-    if (this.keyboardCapture && typeof this.keyboardCapture.stop === 'function') {
-      try { this.keyboardCapture.stop(); } catch {}
-    }
-    this.keyboardCapture = null;
-    this.simInput = null;
-    if (this.pinchOverlay && this.pinchOverlay.container?.parentElement) {
-      this.pinchOverlay.container.parentElement.removeChild(this.pinchOverlay.container);
-    }
-    this.pinchOverlay = null;
-    this.mirror.style.cursor = '';
-    this.mirror.style.touchAction = '';
+  FarmTile.prototype.button = function (name) {
+    const sim = this._anySim();
+    if (sim) sim.pressButton(name);
   };
-
-  // Forward sidebar buttons (home / lock / volume / siri) to the
-  // focused device. FarmFocus calls these on its preset row clicks.
-  FarmTile.prototype.button = function (name) { this.simInput?.button(name); };
-  FarmTile.prototype.type   = function (text) { this.simInput?.type(text); };
-  FarmTile.prototype.key    = function (code) { this.simInput?.key(code); };
+  // Pinch-overlay container of whichever mounted sim still has its
+  // PinchOverlay alive — the grid sim drops its overlay when input is
+  // detached, so this surfaces the focus sim's overlay when focused.
+  // Used by the BrowserRecorder to composite pinch dots into recordings.
+  FarmTile.prototype.overlayContainer = function () {
+    for (const sim of this._sims.values()) {
+      const c = sim.pinchOverlayContainer;
+      if (c) return c;
+    }
+    return null;
+  };
+  FarmTile.prototype.type = function (text) {
+    const sim = this._anySim();
+    if (sim) sim.type(text);
+  };
+  FarmTile.prototype.key = function (code) {
+    const sim = this._anySim();
+    if (sim && sim.keyboard) sim.keyboard.key(code);
+  };
 
   FarmTile.prototype.applyConfig = function (cfg) {
     if (!this.session || !this.session.send) return;
@@ -382,7 +342,12 @@
   FarmTile.prototype.snapshot  = function () { this.session?.send?.({ type: 'snapshot' }); };
 
   FarmTile.prototype.stop = function () {
-    this.unwireInput();
+    // Detach every mounted Simulator (bezel + buttons + screen +
+    // keyboard) before tearing down the stream.
+    for (const sim of this._sims.values()) {
+      try { sim.detach(); } catch {}
+    }
+    this._sims.clear();
     this._stopMirrorCopy();
     if (this._fitObserver) { this._fitObserver.disconnect(); this._fitObserver = null; }
     if (this.session) { this.session.stop(); this.session = null; }

@@ -10,6 +10,43 @@ For releases prior to this changelog, see the
 
 ## [Unreleased]
 
+### Fixed
+- **Server-side AX hit-test for `describeAt(point:)`.** The method was previously falling back to a client-side tree walk because the 0-arg `objectAtPoint:` variant has a chicken/egg problem with `bridgeDelegateToken` — the returned translation needs the token stamped before the call. `AXPTranslator` exposes a **3-arg** variant — `objectAtPoint:displayId:bridgeDelegateToken:` — that takes the token as a parameter, which the dispatcher entry registered in `hitTestServerSide` resolves correctly on the very first XPC sub-request. Meta's idb has used this selector internally for years (`FBSimulatorAccessibilityCommands.m`'s `FBAXTranslationRequest_Point`, backing its describe-point CLI). The practical payoff is that `describeAt(point:)` now returns elements the static tree walk *misses* — most notably SwiftUI tab-bar items inside an `AXGroup` that `describeAll` reports as childless. Falls back to the original client-side walk only when the AXP selector isn't present (defensive only — present on every AXP we've seen on Xcode 26+). Adds `AXFrameTransform.unmap(_:)` for the device-point → host-coordinate inverse and `AXPTranslatorAccessibility.supportsServerSideHitTest` as the capability gate; both fully unit-covered.
+
+---
+
+## [0.1.73] - 2026-05-13
+
+### Changed
+- Bug fixes and improvements.
+
+---
+
+## [0.1.72] - 2026-05-13
+
+### Added
+- **Virtual camera — pipe a Mac webcam into the iOS simulator's `AVCaptureVideoPreviewLayer` / `AVCapturePhotoOutput` / `UIImagePickerController`.** New WebSocket route `/simulators/:udid/camera` and a browser camera card (sidebar view) let the user pick a Mac camera (FaceTime HD, USB webcam, Continuity Camera), Start/Stop streaming, toggle Fit/Fill and Mirror, and watch a live FPS readout. The Mac side runs `AVCameraCapture` → `BGRAConverter` → `SharedMemoryFrameSink`, writing into `/tmp/SimCam.bgra` (24-byte LE header + BGRA pixels). The iOS-simulator side runs `VirtualCamera.dylib` (vendored under `VirtualCamera/` from `asc-pro/SimCam@ee513da7`, fat arm64 + x86_64, linker-signed adhoc), loaded via `DYLD_INSERT_LIBRARIES` armed on the simulator's launchd domain by `SimctlSimulatorInjection`. The dylib is bundled inside the baguette release tarball; `VirtualCameraInstaller` resolves it from `Bundle.module`, sha256-keys the bytes, and copies into a per-hash subdirectory under `~/Library/Application Support/Baguette/builds/` — the per-hash dir dodges iOS 26's simulator dyld page-hash cache rejecting replaced dylibs at the same path with `code:codesigning(3) invalid-page(2)`. Wire envelopes: `camera_list` / `camera_start` / `camera_stop` / `camera_set_flags` upstream, `camera_devices` / `camera_state` downstream. Domain bounded context `Domain/Camera/` is 100% unit-covered (`CameraFlags`, `CameraDevice`, `CameraFrame`, `SharedFrameLayout`, `BGRAConverter`, `CameraSession`, `CameraMessage`, `VirtualCameraInstallPlan`); infrastructure orchestrators (`AVCameraCapture`, `SimctlSimulatorInjection`, `SharedMemoryFrameSink`, `VirtualCameraInstaller`) ≥90% unit-covered via `MockVideoCapture` / `MockSubprocess` / temp-dir fixtures. Only `HostVideoCapture` (the `AVCaptureSession` plumbing) and `AVCameras` (the `AVCaptureDevice.DiscoverySession` enumeration) are integration-only. See [`docs/features/camera.md`](docs/features/camera.md).
+- **`baguette double-tap` — one-shot native iOS double-tap from the CLI ([#11](https://github.com/tddworks/baguette/issues/11)).** New `baguette double-tap --udid <UDID> --x <X> --y <Y> --width <W> --height <H> [--interval <sec>] [--duration <sec>]` subcommand sequences a `touch1-down → touch1-up → touch1-down → touch1-up` recipe inside one process, separated by `duration` (per-tap hold, default 0.08 s) and `interval` (tap-1-up → tap-2-down gap, default 0.05 s). UIKit's `UITapGestureRecognizer(numberOfTapsRequired: 2)` and SwiftUI's `TapGesture(count: 2)` both fire on the result. The wire path (`baguette serve` WS / `baguette input` stdin) already covered this via four `touch1-*` lines on one long-lived connection; what was missing was a CLI shape that didn't pay the ~150–300 ms process-startup cost twice — back-to-back `baguette tap` invocations spent so long in process startup that the recognizer timed out between them. The four-line wire recipe is unchanged and remains the path for browser / scripting clients that need their own timing control. No new wire envelope (`{"type":"double-tap"}` is intentionally not added — the streaming primitives already produce the right HID sequence). See [`docs/features/double-tap.md`](docs/features/double-tap.md).
+
+---
+
+## [0.1.71] - 2026-05-12
+
+### Changed
+- Bug fixes and improvements.
+
+---
+
+## [0.1.70] - 2026-05-11
+
+### Added
+- **Baguette JS SDK (v0.1.0) + `/simulators/<UDID>/definition.json` endpoint — full browser-side refactor.** New SDK shape: `const sim = await Baguette.use({ host, udid, send }); sim.mount(container);` — two lines for the entire frontend interaction model. Replaces the page-level conflation of geometry math, wire-format translation, and DOM eventing with a domain-shaped composition under `Resources/Web/baguette/`: `Simulator → { screen, buttons[*], keyboard? }`, each part its own class, each owning its rendering AND its wire dispatch. Only `transport.js` knows the wire format; consumer pages never see envelopes. Adding Apple Watch / Apple TV / Vision Pro support is "add a `parts/<thing>.js`, no other change." The Swift `SimulatorDefinition.compose(...)` factory ships the per-simulator bootstrap (identity + screen rect + bezel image URLs + per-button envelope + image URLs + pre-computed CSS percent box + rest/hover/pressed transforms + z-order + optional keyboard part) so the JS does no geometry math, no anchor mirroring, no chrome→wire allow-list lookup. All three consumer pages — `sim-stream.js`, `sim-native.js` (with orientation-aware coord remap at the send boundary), `farm/farm-tile.js` (uses SDK parts à la carte) — now consume the SDK. **Deleted: `bezel-buttons.js` (383 LOC), `sim-input.js` (916 LOC), `sim-input-bridge.js` (106 LOC), `device-frame.js` (135 LOC), `keyboard-capture.js`.** The full MouseGestureSource gesture interpreter (drag, pinch, pan, edge-stream, wheel-as-2-finger with idle close, Safari gesture events, option-hover preview, touch) lives in `gestures/pointer-interpreter.js`; the focus-gated keyboard whitelist in `parts/keyboard.js`. Demo page at `/baguette-demo.html` exercises the SDK end-to-end. See [`docs/features/baguette-sdk.md`](docs/features/baguette-sdk.md).
+- **Apple Watch hardware buttons (`digital-crown`, `side-button`, `left-side-button`).** Three new `Press`-compatible wire names cover the watch input surface end-to-end: the `baguette press` CLI, the wire JSON `{"type":"button"}`, and the actionable-bezel overlay on `/simulators/<UDID>` all accept them. Each rides `IndigoHIDMessageForHIDArbitrary` with the (page, usage) pair copied verbatim from `/Library/Developer/DeviceKit/Chrome/watch4.devicechrome/Contents/Resources/chrome.json` — `digital-crown` → page 12 / usage 64, `side-button` → page 12 / usage 149, `left-side-button` → page 0xFF01 / usage 512 (Apple's vendor-defined Watch action page). Before this change the actionable-bezel overlay rendered every watch button but every press was inert: `digital-crown` and `left-side-button` had no entry in the front-end wire-name table, and `side-button` mis-aliased to `power` (page 12 / usage 48), silently sending the wrong consumer code. Verified on `Apple Watch Ultra 2 (49mm)` running watchOS 11.2.
+
+---
+
+## [0.1.69] - 2026-05-09
+
 ### Added
 - **Device orientation (`orientation`).** New `baguette orientation --udid <UDID> <portrait|landscape-left|landscape-right|portrait-upside-down>` CLI subcommand, `POST /simulators/:udid/orientation?value=<…>` HTTP route, and a single rotate icon in the focus-mode toolbar that cycles the device 90° clockwise on each click. All three surfaces feed `simulator.orientation().set(_:)`, which fires a `GSEventTypeDeviceOrientationChanged` mach message at the booted simulator's `PurpleWorkspacePort` — bypassing SimulatorKit's NSView path entirely so the host stays headless. Wire format (112-byte buffer, `msgh_size = 108`, `msgh_id = 0x7B`, GSEvent type `50 | 0x20000` at offset `0x18`, `UIDeviceOrientation` raw value at `0x4C`) is reverse-engineered from `Simulator.app`'s `[SimDevice(GSEvents) gsEventsSendOrientation:]` and matches idb's `PrivateHeaders/SimulatorApp/GSEvent.h`. iPhone UIKit silently ignores `portrait-upside-down` for apps that don't declare `UIInterfaceOrientationPortraitUpsideDown` (which is most Apple-shipped apps including SpringBoard / Photos / Settings) — Domain / CLI / HTTP still accept the value unconditionally, but the browser cycle button drops it on iPhone (3-step on phones via `chrome.json.identifier` prefix, 4-step on tablets) so every click visibly rotates.
 - **Stream button on `/simulators` opens focus mode.** Clicking **Stream** in the simulator list now navigates to `/simulators/<UDID>` (the focus-mode page owned by `sim-native.js`) instead of swapping the inline `#simPluginView` in place. Browser back returns to the list, the URL is shareable, and the inline-view flash is gone. Inverse trip: a glass-pill **sidebar view** button at the bottom-left of focus mode (mirror of the theme toggle) navigates back to `/simulators#stream=<UDID>`; `sim-stream.js` reads the hash on load, fetches the device name, strips the hash, and auto-opens the inline `startStream` layout — so the user lands in the sidebar view directly without an extra click.
@@ -142,7 +179,12 @@ For releases prior to this changelog, see the
 
 ---
 
-[Unreleased]: https://github.com/tddworks/baguette/compare/v0.1.68...HEAD
+[Unreleased]: https://github.com/tddworks/baguette/compare/v0.1.73...HEAD
+[0.1.73]: https://github.com/tddworks/baguette/compare/v0.1.72...v0.1.73
+[0.1.72]: https://github.com/tddworks/baguette/compare/v0.1.71...v0.1.72
+[0.1.71]: https://github.com/tddworks/baguette/compare/v0.1.70...v0.1.71
+[0.1.70]: https://github.com/tddworks/baguette/compare/v0.1.69...v0.1.70
+[0.1.69]: https://github.com/tddworks/baguette/compare/v0.1.68...v0.1.69
 [0.1.68]: https://github.com/tddworks/baguette/compare/v0.1.67...v0.1.68
 [0.1.67]: https://github.com/tddworks/baguette/compare/v0.1.66...v0.1.67
 [0.1.66]: https://github.com/tddworks/baguette/compare/v0.1.65...v0.1.66
